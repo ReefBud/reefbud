@@ -3,7 +3,7 @@ export const metadata = { title: "ReefBud", description: "Multi-user reef tank d
 import "./globals.css";
 import Link from "next/link";
 import HealthBadge from "@/components/HealthBadge";
-import AuthBar from "@/components/AuthBar";
+import HeaderAuth from "@/components/HeaderAuth";
 export default function RootLayout({ children }:{children:React.ReactNode}) {
   return (
   <html lang="en"><body>
@@ -18,7 +18,7 @@ export default function RootLayout({ children }:{children:React.ReactNode}) {
           <Link href="/calculator">Calculator</Link>
           <Link href="/icp">ICP</Link>
         </nav>
-        <div className="flex items-center gap-3"><HealthBadge /><AuthBar /></div>
+        <div className="flex items-center gap-3"><HealthBadge /><HeaderAuth /></div>
       </header>
       {children}
     </div>
