@@ -25,6 +25,7 @@ export default function Dashboard(): JSX.Element {
 
   const [targets, setTargets] = useState<Targets>({});
   const [paramMap, setParamMap] = useState<Record<string, number>>({});
+  const [userId, setUserId] = useState<string | null>(null);
 
   const inputClass =
     'w-full rounded-xl border border-gray-200 px-3 py-2 shadow-sm ' +
@@ -35,6 +36,7 @@ export default function Dashboard(): JSX.Element {
     (async () => {
       const { data: { user } = { user: null } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
+      if (live) setUserId(user.id);
 
       // 1) Ensure a tank exists for this user
       const { data: tanks } = await supabase
@@ -70,7 +72,8 @@ export default function Dashboard(): JSX.Element {
       const { data: tgs } = await supabase
         .from('targets')
         .select('parameter_id,target_value')
-        .eq('tank_id', tk.id);
+        .eq('tank_id', tk.id)
+        .eq('user_id', user.id);
 
       const byId: Record<number, number> = {};
       (tgs ?? []).forEach((t: any) => { byId[t.parameter_id] = Number(t.target_value); });
@@ -98,16 +101,17 @@ export default function Dashboard(): JSX.Element {
     };
 
   const rowsToUpsert = useMemo(() => {
-    if (!tank) return [];
+    if (!tank || !userId) return [];
     const keys = ['alk','ca','mg','po4','no3','salinity'] as (keyof Targets)[];
     return keys
       .filter((k) => paramMap[String(k)] !== undefined)
       .map((k) => ({
+        user_id: userId,
         tank_id: tank.id,
         parameter_id: paramMap[String(k)],
         target_value: targets[k] ?? null
       }));
-  }, [tank, targets, paramMap]);
+  }, [tank, targets, paramMap, userId]);
 
   const saveAll = async (): Promise<void> => {
     if (!tank) return;
@@ -127,13 +131,12 @@ export default function Dashboard(): JSX.Element {
       alert(`Could not save tank: ${tankErr?.message ?? 'Unknown error'}`);
       return;
     }
-
     setTank(updatedTank as Tank);
 
-    // 2) Upsert six target rows for this tank
+    // 2) Upsert six target rows for this user + tank
     const { error: tgtErr } = await supabase
       .from('targets')
-      .upsert(rowsToUpsert, { onConflict: 'tank_id,parameter_id' });
+      .upsert(rowsToUpsert, { onConflict: 'user_id,tank_id,parameter_id' });
 
     setSaving(false);
     if (tgtErr) {
