@@ -24,7 +24,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password: pin });
     setBusy(false);
     if (error) {
-      setErr("Incorrect phone or PIN.");
+      setErr(error.message || "Incorrect phone or PIN.");
       return;
     }
     router.replace("/dashboard");

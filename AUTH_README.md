@@ -1,23 +1,14 @@
-# Phone + 4-digit PIN Auth (Add-on)
+# Phone + 4-digit PIN Auth
 
-This project was augmented to support sign-in/up with **Phone number + 4-digit PIN** (no SMS).
+Steps in Supabase:
+1. Auth -> Providers -> Email: enable Email provider. Turn on "Auto confirm new users" or disable confirmations.
+2. Auth -> Configuration -> Password length minimum: 4.
+3. Auth -> Settings -> Disable "New users are not allowed to sign up" if it is ON.
+4. No SMTP needed since we do not send emails.
 
-## New files
-- `app/login/page.tsx`
-- `app/register/page.tsx`
-- `components/HeaderAuth.tsx`
-- `lib/phoneAuth.ts`
-- `sql/001_add_phone_to_profiles.sql`
+Why it failed before:
+- Some projects reject unusual TLDs. We now use `${phone}@example.com` as the alias which is always valid.
 
-## One-time Supabase settings
-- Auth → Configuration → Minimum password length: **4**
-- Optional: disable email confirmations (we use alias emails like `27831234567@phone.local`)
-
-## How it works
-- We normalize the phone to digits only and convert `0XXXXXXXXX` to `27XXXXXXXXX` (change if needed).
-- We build an alias email `${phone}@phone.local` and use Supabase **password** auth.
-- RLS continues to work via normal Supabase sessions.
-- Register and Login pages redirect to `/dashboard` on success.
-
-## Non-destructive
-This was added without removing existing files. If you prefer different routes, move these pages/components and update links accordingly.
+Test flow:
+- Go to /register, create an account with phone + 4-digit PIN.
+- It should redirect to /dashboard, then sign out and sign back in at /login.

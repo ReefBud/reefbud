@@ -28,7 +28,7 @@ export default function RegisterPage() {
     });
     if (error) {
       setBusy(false);
-      setErr(error.message.includes("already") ? "This phone is already registered." : "Could not create account.");
+      setErr(error.message || "Could not create account.");
       return;
     }
     const user = data.user;

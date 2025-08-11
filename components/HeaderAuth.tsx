@@ -4,7 +4,6 @@ import { supabase } from "@/lib/supabaseClient";
 
 export default function HeaderAuth() {
   const [user, setUser] = useState<any>(null);
-
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => {
@@ -12,7 +11,6 @@ export default function HeaderAuth() {
     });
     return () => sub?.subscription.unsubscribe();
   }, []);
-
   if (!user) {
     return (
       <div className="flex items-center gap-2">
@@ -21,7 +19,6 @@ export default function HeaderAuth() {
       </div>
     );
   }
-
   return (
     <div className="flex items-center gap-2">
       <span className="text-sm text-gray-600">Signed in</span>
