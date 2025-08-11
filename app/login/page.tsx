@@ -14,6 +14,7 @@ export default function LoginPage() {
   async function onLogin(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    if (!/^\d{6}$/.test(pin)) { setErr("Enter a 6-digit PIN."); return; }
     const digits = normalizePhone(phone);
     if (!digits || pin.length !== 4) {
       setErr("Enter your phone and 6-digit PIN.");
@@ -50,7 +51,7 @@ export default function LoginPage() {
             className="w-full border rounded px-3 py-2"
             type="password"
             inputMode="numeric"
-            pattern="\d{4}"
+            
             maxLength={6}
             value={pin}
             onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0,6))}
