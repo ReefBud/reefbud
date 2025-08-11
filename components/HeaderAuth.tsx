@@ -14,8 +14,8 @@ export default function HeaderAuth() {
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <a className="px-3 py-2 rounded border" href="/login">Sign in</a>
-        <a className="px-3 py-2 rounded border bg-gray-900 text-white" href="/register">Create account</a>
+        <a className="px-3 py-2 rounded border" href="/login">Sign in with Google</a>
+        
       </div>
     );
   }
