@@ -6,12 +6,13 @@ import { supabase } from "@/lib/supabaseClient";
 export default function AuthCallback() {
   const router = useRouter();
   useEffect(() => {
-    // Wait briefly to ensure session is set, then route to dashboard
-    const t = setTimeout(async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      router.replace("/dashboard");
-    }, 300);
-    return () => clearTimeout(t);
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.id) {
+        await supabase.from("profiles").upsert({ id: user.id }, { onConflict: "id" });
+      }
+      router.replace("/");
+    })();
   }, [router]);
-  return <main className="p-6">Signing you in…</main>;
+  return <p className="p-6">Signing you in…</p>;
 }
