@@ -16,7 +16,7 @@ export default function RegisterPage() {
     setErr(null);
     const digits = normalizePhone(phone);
     if (!digits || pin.length !== 4) {
-      setErr("Enter your phone and a 4-digit PIN.");
+      setErr("Enter your phone and a 6-digit PIN.");
       return;
     }
     setBusy(true);
@@ -56,15 +56,15 @@ export default function RegisterPage() {
           />
         </div>
         <div>
-          <label className="block text-sm mb-1">PIN (4 digits)</label>
+          <label className="block text-sm mb-1">PIN (6 digits)</label>
           <input
             className="w-full border rounded px-3 py-2"
             type="password"
             inputMode="numeric"
             pattern="\d{4}"
-            maxLength={4}
+            maxLength={6}
             value={pin}
-            onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0,4))}
+            onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0,6))}
           />
         </div>
         {err && <div className="text-sm text-red-600">{err}</div>}
