@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 
 type Targets = {
@@ -9,63 +9,107 @@ type Targets = {
   mg?: number | null;
   po4?: number | null;
   no3?: number | null;
-  salinity?: number | null; // ppt
+  salinity?: number | null;
 };
+
+type Tank = { id: string; name?: string; volume_value?: number; volume_unit?: 'L'|'gal' };
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
-  const [targets, setTargets] = useState<Targets>({});
   const [saving, setSaving] = useState(false);
+  const [tank, setTank] = useState<Tank | null>(null);
+  const [targets, setTargets] = useState<Targets>({});
+
+  // cache param key -> id map
+  const [paramMap, setParamMap] = useState<Record<string, number>>({});
+
+  const inputClass =
+  'w-full rounded-xl border border-gray-200 px-3 py-2 shadow-sm ' +
+  'bg-gradient-to-b from-gray-50 to-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400';
 
   useEffect(() => {
-    let mounted = true;
+    let live = true;
     (async () => {
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userData?.user) {
-        setLoading(false);
-        return;
+      const { data: { user } = { user: null } } = await supabase.auth.getUser();
+      if (!user) { setLoading(false); return; }
+
+      // 1) ensure a tank
+      const { data: tanks } = await supabase
+      .from('tanks')
+      .select('id,name,volume_value,volume_unit')
+      .eq('user_id', user.id)
+      .limit(1);
+
+      let tk: Tank | null = tanks?.[0] ?? null;
+      if (!tk) {
+        const { data: created, error } = await supabase
+        .from('tanks')
+        .insert({ user_id: user.id, name: 'My Tank', volume_value: 200, volume_unit: 'L' })
+        .select()
+        .single();
+        if (error || !created) { setLoading(false); return; }
+        tk = created as Tank;
       }
+      if (!live) return;
+      setTank(tk);
 
-      const { data, error } = await supabase
-        .from('targets')
-        .select('alk, ca, mg, po4, no3, salinity')
-        .eq('user_id', userData.user.id)
-        .maybeSingle();
+      // 2) load parameters (id map)
+      const { data: params } = await supabase.from('parameters').select('id,key');
+      const map: Record<string, number> = {};
+      (params ?? []).forEach((p: any) => { map[p.key] = p.id; });
+      if (!live) return;
+      setParamMap(map);
 
-      if (!mounted) return;
-      if (!error && data) setTargets(data as Targets);
+      // 3) load existing targets for this tank
+      const { data: tgs } = await supabase
+      .from('targets')
+      .select('parameter_id,target_value')
+      .eq('tank_id', tk.id);
+
+      const byId: Record<number, number> = {};
+      (tgs ?? []).forEach((t: any) => { byId[t.parameter_id] = Number(t.target_value); });
+
+      const next: Targets = {
+        alk: byId[map['alk']],
+        ca: byId[map['ca']],
+        mg: byId[map['mg']],
+        po4: byId[map['po4']],
+        no3: byId[map['no3']],
+        salinity: byId[map['salinity']],
+      };
+      if (!live) return;
+      setTargets(next);
       setLoading(false);
     })();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { live = false; };
   }, []);
 
+  const setNum =
+  (key: keyof Targets, step = '0.1') =>
+  (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setTargets((s) => ({ ...s, [key]: v === '' ? null : Number(v) }));
+  };
+
+  const rowsToUpsert = useMemo(() => {
+    if (!tank) return [];
+    return (['alk','ca','mg','po4','no3','salinity'] as (keyof Targets)[])
+    .filter((k) => paramMap[String(k)] !== undefined)
+    .map((k) => ({
+      tank_id: tank.id,
+      parameter_id: paramMap[String(k)],
+                 target_value: targets[k] ?? null
+    }));
+  }, [tank, targets, paramMap]);
+
   const saveTargets = async () => {
+    if (!tank) return;
     setSaving(true);
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData?.user;
-    if (!user) {
-      setSaving(false);
-      alert('You need to be signed in to save targets.');
-      return;
-    }
 
-    const payload = {
-      user_id: user.id,
-      alk: targets.alk ?? null,
-      ca: targets.ca ?? null,
-      mg: targets.mg ?? null,
-      po4: targets.po4 ?? null,
-      no3: targets.no3 ?? null,
-      salinity: targets.salinity ?? null,
-      updated_at: new Date().toISOString()
-    };
-
+    // Upsert 6 rows for this tank.
     const { error } = await supabase
-      .from('targets')
-      .upsert(payload, { onConflict: 'user_id' });
+    .from('targets')
+    .upsert(rowsToUpsert, { onConflict: 'tank_id,parameter_id' });
 
     setSaving(false);
     if (error) {
@@ -75,114 +119,38 @@ export default function Dashboard() {
     }
   };
 
-  const inputClass =
-    'w-full rounded-xl border border-gray-200 px-3 py-2 shadow-sm ' +
-    'bg-gradient-to-b from-gray-50 to-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400';
-
-  const setNum =
-    (key: keyof Targets, step = '0.1') =>
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const v = e.target.value;
-      setTargets((s) => ({ ...s, [key]: v === '' ? null : Number(v) }));
-    };
-
   if (loading) {
     return (
       <main className="max-w-3xl mx-auto p-4">
-        <h1 className="text-2xl font-semibold">Target Parameters</h1>
-        <p className="text-sm text-gray-500 mt-2">Loading...</p>
+      <h1 className="text-2xl font-semibold">Target Parameters</h1>
+      <p className="text-sm text-gray-500 mt-2">Loading...</p>
       </main>
     );
   }
 
   return (
     <main className="max-w-3xl mx-auto p-4">
-      <h1 className="text-2xl font-semibold">Target Parameters</h1>
-      <p className="text-sm text-gray-600 mt-1">
-        Set your desired targets. These are used by the Calculator and visualized in Results.
-      </p>
+    <h1 className="text-2xl font-semibold">Target Parameters</h1>
+    <p className="text-sm text-gray-600 mt-1">
+    Set your desired targets per tank. These are used by the Calculator and visualized in Results.
+    </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
-        <div>
-          <label className="block text-sm mb-1">Alkalinity (dKH)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="0.1"
-            value={targets.alk ?? ''}
-            onChange={setNum('alk', '0.1')}
-            placeholder="8.2"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Calcium (ppm)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="1"
-            value={targets.ca ?? ''}
-            onChange={setNum('ca', '1')}
-            placeholder="430"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Magnesium (ppm)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="1"
-            value={targets.mg ?? ''}
-            onChange={setNum('mg', '1')}
-            placeholder="1400"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Phosphate (ppm)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="0.001"
-            value={targets.po4 ?? ''}
-            onChange={setNum('po4', '0.001')}
-            placeholder="0.03"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Nitrate (ppm)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="0.1"
-            value={targets.no3 ?? ''}
-            onChange={setNum('no3', '0.1')}
-            placeholder="5"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Salinity (ppt)</label>
-          <input
-            className={inputClass}
-            type="number"
-            step="0.1"
-            value={targets.salinity ?? ''}
-            onChange={setNum('salinity', '0.1')}
-            placeholder="35.0"
-          />
-        </div>
-      </div>
-
-      <button
-        className="mt-6 inline-flex items-center rounded-xl bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-60"
-        onClick={saveTargets}
-        disabled={saving}
-      >
-        {saving ? 'Saving...' : 'Save targets'}
-      </button>
-    </main>
-  );
-}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
+    <div>
+    <label className="block text-sm mb-1">Alkalinity (dKH)</label>
+    <input className={inputClass} type="number" step="0.1"
+    value={targets.alk ?? ''} onChange={setNum('alk','0.1')} placeholder="8.2" />
+    </div>
+    <div>
+    <label className="block text-sm mb-1">Calcium (ppm)</label>
+    <input className={inputClass} type="number" step="1"
+    value={targets.ca ?? ''} onChange={setNum('ca','1')} placeholder="430" />
+    </div>
+    <div>
+    <label className="block text-sm mb-1">Magnesium (ppm)</label>
+    <input className={inputClass} type="number" step="1"
+    value={targets.mg ?? ''} onChange={setNum('mg','1')} placeholder="1400" />
+    </div>
+    <div>
+    <label className="block text-sm mb-1">Phosphate (ppm)</label>
+    <input className={inputClass}
