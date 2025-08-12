@@ -1,10 +1,10 @@
 // app/results/manage/page.tsx
 'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import DeleteReadingButton from '@/app/components/DeleteReadingButton';
+import { supabase } from '../../../lib/supabaseClient';
+import DeleteReadingButton from '../../components/DeleteReadingButton';
 
-type Row = { id: string; value: number | null; measured_at: string };
+type Row = { id: string; value: number | null; measured_at: string; parameter_key?: string | null; parameter?: string | null };
 
 export default function ManageResultsPage() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -19,7 +19,7 @@ export default function ManageResultsPage() {
       if (!user) throw new Error('Please sign in');
       const { data, error } = await supabase
         .from('results')
-        .select('id, value, measured_at')
+        .select('id, value, measured_at, parameter_key, parameter')
         .eq('user_id', user.id)
         .order('measured_at', { ascending: false })
         .limit(200);
@@ -37,7 +37,7 @@ export default function ManageResultsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4">
       <h1 className="text-xl font-semibold">Manage Results</h1>
-      <p className="text-sm text-gray-600">Remove an incorrect reading.</p>
+      <p className="text-sm text-gray-600">Remove an incorrect reading from your history.</p>
 
       {loading && <div>Loading…</div>}
       {error && <div className="text-red-600">Error: {error}</div>}
@@ -48,6 +48,9 @@ export default function ManageResultsPage() {
             <div>
               <div className="font-medium">Value: {r.value ?? '—'}</div>
               <div className="text-xs opacity-70">{new Date(r.measured_at).toLocaleString()}</div>
+              {(r.parameter_key || r.parameter) && (
+                <div className="text-xs opacity-70">Param: {r.parameter_key || r.parameter}</div>
+              )}
             </div>
             <DeleteReadingButton
               id={r.id}

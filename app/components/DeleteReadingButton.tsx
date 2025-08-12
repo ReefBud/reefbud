@@ -1,6 +1,7 @@
 'use client';
+
 import { useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../../lib/supabaseClient';
 
 type Props = {
   id: string;
@@ -39,7 +40,7 @@ export default function DeleteReadingButton({
       disabled={busy}
       className={
         className ??
-        'inline-flex items-center justify-center rounded-md border px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60'
+        'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60'
       }
       onClick={handleDelete}
       title="Delete result"
