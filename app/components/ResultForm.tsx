@@ -6,12 +6,12 @@ import { supabase } from '../../lib/supabaseClient';
 type ParamKey = 'alk' | 'ca' | 'mg' | 'po4' | 'no3' | 'salinity';
 
 const PARAMS = [
-    { key: 'alk', label: 'Alkalinity (dKH)', example: '7–12' },
-    { key: 'ca', label: 'Calcium (ppm)', example: '400–450' },
-    { key: 'mg', label: 'Magnesium (ppm)', example: '1350–1450' },
-    { key: 'po4', label: 'Phosphate (ppm)', example: '0.03–0.1' },
-    { key: 'no3', label: 'Nitrate (ppm)', example: '5–15' },
-    { key: 'salinity', label: 'Salinity (ppt)', example: '30–40' },
+    { key: 'alk',      label: 'Alkalinity (dKH)', example: '7–12' },
+    { key: 'ca',       label: 'Calcium (ppm)',    example: '400–450' },
+    { key: 'mg',       label: 'Magnesium (ppm)',  example: '1350–1450' },
+    { key: 'po4',      label: 'Phosphate (ppm)',  example: '0.03–0.1' },
+    { key: 'no3',      label: 'Nitrate (ppm)',    example: '5–15' },
+    { key: 'salinity', label: 'Salinity (ppt)',   example: '30–40' },
 ] as const;
 
 export default function ResultForm({
@@ -49,22 +49,21 @@ export default function ResultForm({
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Please sign in');
 
-            // 1. Look up the parameter_id for this param + tank
-            const { data: paramRows, error: paramError } = await supabase
+            // 1) Look up parameter_id from global parameters table by key (no tank_id filter)
+            const { data: paramRows, error: paramErr } = await supabase
             .from('parameters')
             .select('id')
             .eq('key', param)
-            .eq('tank_id', tankId)
             .limit(1);
 
-            if (paramError) throw paramError;
+            if (paramErr) throw paramErr;
             if (!paramRows || paramRows.length === 0) {
-                throw new Error(`No parameter found for ${param} in this tank`);
+                throw new Error(`Parameter definition not found for key "${param}". Please ensure a row exists in "parameters" (key='${param}').`);
             }
 
             const parameterId = paramRows[0].id;
 
-            // 2. Insert the result with parameter_id
+            // 2) Insert the result with parameter_id
             const row = {
                 user_id: user.id,
                 tank_id: tankId,
