@@ -1,52 +1,168 @@
-
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-function toCSV(rows:any[]){const header=["date_iso","time_str","alk","ca","mg","po4","no3"];return [header.join(","),...rows.map(r=>[r.date_iso,r.time_str,r.alk??"",r.ca??"",r.mg??"",r.po4??"",r.no3??""].join(","))].join("\n");}
-export default function ResultsPage(){
-  const [userId,setUserId]=useState<string>(); const [items,setItems]=useState<any[]>([]);
-  const [dateISO,setDateISO]=useState<string>(new Date().toISOString().slice(0,10));
-  const [time,setTime]=useState<string>(new Date().toTimeString().slice(0,5));
-  const [alk,setAlk]=useState(""); const [ca,setCa]=useState(""); const [mg,setMg]=useState(""); const [po4,setPo4]=useState(""); const [no3,setNo3]=useState("");
-  const [frm,setFrm]=useState(""); const [to,setTo]=useState("");
-  useEffect(()=>{(async()=>{const {data:{user}}=await supabase.auth.getUser(); if(!user) return; setUserId(user.id);
-    const {data}=await supabase.from("readings").select("id,date_iso,time_str,alk,ca,mg,po4,no3").eq("user_id",user.id).order("date_iso",{ascending:false}).order("time_str",{ascending:false}); setItems(data||[]);
-  })();},[]);
-  async function add(){ if(!userId) return; const payload:any={user_id:userId,date_iso:dateISO,time_str:time};
-    if(alk)payload.alk=Number(alk); if(ca)payload.ca=Number(ca); if(mg)payload.mg=Number(mg); if(po4)payload.po4=Number(po4); if(no3)payload.no3=Number(no3);
-    const {data,error}=await supabase.from("readings").insert(payload).select().single(); if(error) alert(error.message); else setItems(p=>[data,...p]);
-    setAlk("");setCa("");setMg("");setPo4("");setNo3("");
-  }
-  const filtered=useMemo(()=>items.filter(i=>{if(frm&&i.date_iso<frm)return false; if(to&&i.date_iso>to)return false; return true;}),[items,frm,to]).map(x=>x);
-  function downloadCSV(){const csv=toCSV(filtered); const b=new Blob([csv],{type:"text/csv"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u;a.download="readings.csv";a.click();URL.revokeObjectURL(u);}
-  return (<main className="space-y-4">
-    <div className="border rounded p-4"><h2 className="font-semibold">Results</h2>{!userId&&<p className="text-sm text-gray-600">Sign in to log results.</p>}</div>
-    {userId&&(<>
-      <div className="border rounded p-4 space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label>Date</label><input className="border rounded px-2 py-1 w-full" type="date" value={dateISO} onChange={e=>setDateISO(e.target.value)} /></div>
-          <div><label>Time</label><input className="border rounded px-2 py-1 w-full" type="time" value={time} onChange={e=>setTime(e.target.value)} /></div>
-          <div><label>Alk</label><input className="border rounded px-2 py-1 w-full" value={alk} onChange={e=>setAlk(e.target.value)} /></div>
-          <div><label>Ca</label><input className="border rounded px-2 py-1 w-full" value={ca} onChange={e=>setCa(e.target.value)} /></div>
-          <div><label>Mg</label><input className="border rounded px-2 py-1 w-full" value={mg} onChange={e=>setMg(e.target.value)} /></div>
-          <div><label>PO4</label><input className="border rounded px-2 py-1 w-full" value={po4} onChange={e=>setPo4(e.target.value)} /></div>
-          <div><label>NO3</label><input className="border rounded px-2 py-1 w-full" value={no3} onChange={e=>setNo3(e.target.value)} /></div>
+import ResultsChart from "@/components/ResultsChart";
+
+type Param = { id: number; key: "alk" | "ca" | "mg" | "po4" | "no3" | "salinity"; display_name: string; unit: string };
+type Tank = { id: string; name?: string };
+
+type ResultRow = {
+  created_at?: string;
+  measured_at?: string;
+  ts?: string;
+  value?: number;
+  parameter_id?: number | null;
+  parameter_key?: string | null;
+  user_id?: string | null;
+  tank_id?: string | null;
+};
+
+const PARAM_ORDER: Array<Param["key"]> = ["alk", "ca", "mg", "po4", "no3", "salinity"];
+
+export default function ResultsPage() {
+  const [userId, setUserId] = useState<string>();
+  const [tank, setTank] = useState<Tank>();
+  const [params, setParams] = useState<Param[]>([]);
+  const [paramKey, setParamKey] = useState<Param["key"]>("alk");
+  const [rows, setRows] = useState<ResultRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Load user, tank, parameters
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setErr("Please sign in to view results.");
+          setLoading(false);
+          return;
+        }
+        setUserId(user.id);
+
+        // find or create a tank
+        const t = await supabase.from("tanks").select("id, name").eq("user_id", user.id).limit(1);
+        let tk = t.data?.[0] as Tank | undefined;
+        if (!tk) {
+          const created = await supabase.from("tanks").insert({ user_id: user.id, name: "My Tank", volume_value: 200, volume_unit: "L" }).select("id, name").single();
+          if (created.error) throw created.error;
+          tk = created.data as Tank;
+        }
+        setTank(tk);
+
+        // get parameters
+        const p = await supabase.from("parameters").select("id, key, display_name, unit");
+        if (p.error) throw p.error;
+        const list = (p.data || []) as any[];
+        const filtered = list.filter((x) => PARAM_ORDER.includes(x.key));
+        filtered.sort((a, b) => PARAM_ORDER.indexOf(a.key) - PARAM_ORDER.indexOf(b.key));
+        setParams(filtered);
+      } catch (e: any) {
+        console.error("init results error", e);
+        setErr(e?.message || "Failed to initialize Results.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const selectedParam = useMemo(() => params.find((p) => p.key === paramKey), [params, paramKey]);
+  const yUnit = selectedParam?.unit;
+
+  // Load timeseries for selected parameter
+  useEffect(() => {
+    (async () => {
+      if (!userId || !tank || !selectedParam) return;
+      setLoading(true);
+      setErr(null);
+      try {
+        // Try common shapes in order:
+        // 1) results with parameter_id + tank_id + user_id
+        let q = supabase
+          .from("results")
+          .select("created_at, measured_at, value, parameter_id, parameter_key, user_id, tank_id")
+          .eq("user_id", userId)
+          .eq("tank_id", tank.id)
+          .eq("parameter_id", selectedParam.id)
+          .order("measured_at", { ascending: true })
+          .order("created_at", { ascending: true });
+        let r = await q;
+        let data = r.data as ResultRow[] | null;
+        if (r.error) throw r.error;
+
+        // 2) Fallback to parameter_key if no rows
+        if (!data || data.length === 0) {
+          const r2 = await supabase
+            .from("results")
+            .select("created_at, measured_at, value, parameter_id, parameter_key, user_id, tank_id")
+            .eq("user_id", userId)
+            .eq("tank_id", tank.id)
+            .eq("parameter_key", selectedParam.key)
+            .order("measured_at", { ascending: true })
+            .order("created_at", { ascending: true });
+          if (r2.error) throw r2.error;
+          data = r2.data as ResultRow[] | null;
+        }
+
+        setRows(data || []);
+      } catch (e: any) {
+        console.error("load timeseries error", e);
+        setErr(e?.message || "Failed to load results.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [userId, tank?.id, selectedParam?.id, selectedParam?.key]);
+
+  const chartData = useMemo(() => {
+    return (rows || []).map((r) => ({
+      ts: r.measured_at || r.created_at || r.ts || null,
+      value: typeof r.value === "number" ? r.value : (r.value ? Number(r.value) : null),
+    })).filter((d) => d.ts && d.value !== null);
+  }, [rows]);
+
+  return (
+    <main className="space-y-6">
+      <section className="card">
+        <h2 className="text-lg font-semibold">Results</h2>
+        <p className="text-sm text-gray-600">
+          View your parameter trends over time.
+        </p>
+      </section>
+
+      <section className="card space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <label className="label">Parameter</label>
+            <select
+              className="input w-full"
+              value={paramKey}
+              onChange={(e) => setParamKey(e.target.value as Param["key"])}
+            >
+              {params.map((p) => (
+                <option key={p.id} value={p.key}>
+                  {p.display_name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <button className="px-3 py-2 rounded bg-black text-white" onClick={add}>Add</button>
-      </div>
-      <div className="border rounded p-4 space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label>From</label><input className="border rounded px-2 py-1 w-full" type="date" value={frm} onChange={e=>setFrm(e.target.value)} /></div>
-          <div><label>To</label><input className="border rounded px-2 py-1 w-full" type="date" value={to} onChange={e=>setTo(e.target.value)} /></div>
+
+        <div>
+          {loading ? (
+            <div className="text-gray-600">Loading…</div>
+          ) : err ? (
+            <div className="text-red-600">{err}</div>
+          ) : chartData.length === 0 ? (
+            <div className="text-gray-600">No data for {selectedParam?.display_name} yet.</div>
+          ) : (
+            <ResultsChart data={chartData} yUnit={yUnit} />
+          )}
         </div>
-        <button className="px-3 py-2 rounded bg-black text-white" onClick={downloadCSV}>Export CSV</button>
-      </div>
-      <div className="border rounded p-4">
-        <h3 className="font-medium mb-2">Recent</h3>
-        {filtered.length===0?<p className="text-sm text-gray-500">No results for range.</p>:(
-          <ul className="divide-y">{filtered.map((i:any)=>(<li key={i.id} className="py-2 text-sm">{i.date_iso} {i.time_str} — Alk {i.alk??""} Ca {i.ca??""} Mg {i.mg??""} PO4 {i.po4??""} NO3 {i.no3??""}</li>))}</ul>
-        )}
-      </div>
-    </>)}
-  </main>);
+      </section>
+    </main>
+  );
 }
