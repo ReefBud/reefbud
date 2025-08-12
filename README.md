@@ -1,36 +1,30 @@
-Delete readings feature patch
-=============================
+Delete readings feature patch (v2)
+=================================
 
-What this adds
-- Supabase policy that lets a signed-in user delete only their own readings
-- Grant for authenticated role so PostgREST accepts DELETE
-- A small React button component to trigger the delete
-- Example list integration that also removes the item from state and calendar
+What changed in v2
+- Added missing helper: utils/supabase/client.ts so the import "@/utils/supabase/client" resolves.
+- No other changes.
 
 Apply the SQL
 1. Open Supabase SQL editor.
-2. Paste and run: supabase/sql/2025-08-12_readings_delete_policy.sql
-   You can safely run it more than once.
+2. Run: supabase/sql/2025-08-12_readings_delete_policy.sql
 
-Wire up the UI
-1. Copy app/components/DeleteReadingButton.tsx into your project.
-2. Import and render <DeleteReadingButton id={reading.id} onDeleted={...} /> wherever you list readings.
-3. In onDeleted, remove the item from your list state and calendar events.
+Add files
+- Copy `app/components/DeleteReadingButton.tsx` into your project.
+- Ensure `utils/supabase/client.ts` exists (included here). If your project does **not** use the "@/..." alias, change the import in DeleteReadingButton to a relative path:
+  `import { createClient } from '../../utils/supabase/client'`
 
 Git commit and push
-If you are already on a feature branch:
+If on a feature branch:
     git add -A
-    git commit -m "feat(results): allow deleting readings safely with RLS and UI button"
+    git commit -m "feat(results): delete readings + supabase client helper"
     git push
 
-If you want to create a new branch first:
+Create a new branch:
     git switch -c feat/delete-readings
     git add -A
-    git commit -m "feat(results): allow deleting readings safely with RLS and UI button"
+    git commit -m "feat(results): delete readings + supabase client helper"
     git push -u origin feat/delete-readings
 
-If you are unsure which branch you are on:
-    git rev-parse --abbrev-ref HEAD
-
 Deploy
-Vercel will deploy on push if your project is already connected.
+Vercel will build on push if connected.
