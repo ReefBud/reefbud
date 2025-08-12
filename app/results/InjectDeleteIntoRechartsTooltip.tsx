@@ -19,7 +19,7 @@ export default function InjectDeleteIntoRechartsTooltip(
   if (!active || !payload?.length) return null;
 
   const p = payload[0]?.payload as Datum | undefined;
-  if (!p?.id) return null; // ensure your dataset includes id per point
+  if (!p?.id) return null;
 
   const when = p.measured_at || p.date || (typeof label === 'string' ? label : undefined);
   const value = p.value ?? p.y ?? p.v;

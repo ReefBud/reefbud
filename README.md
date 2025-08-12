@@ -1,39 +1,49 @@
-Results Delete-in-Tooltip Patch (v6)
+Delete Readings – Complete Patch (v8)
 ====================================
 
-What this adds
-- Visible Delete button inside the Recharts tooltip.
-- Reusable DeleteReadingButton component.
-- Supabase SQL policy to allow row-owner deletes.
-- Client/Server examples for wiring.
+What you get
+- /results/manage page with clear Remove buttons (works independently of your chart).
+- Delete button in Recharts tooltip so the action appears right next to the line chart.
+- Idempotent RLS delete policy SQL.
+- A tiny Supabase client helper.
+- Example chart + server rendering example.
 
-Files
-- supabase/sql/2025-08-12_readings_delete_policy.sql
-- utils/supabase/client.ts
-- app/components/DeleteReadingButton.tsx
-- app/results/InjectDeleteIntoRechartsTooltip.tsx
-- app/results/ResultsChart.example.tsx
-- app/results/page.server.example.tsx
-
-Quick wire-up
-1) Ensure each reading in your chart data includes an id matching the DB row.
-2) Replace your Recharts <Tooltip /> with:
+Install
+1) Copy files into the same paths in your repo.
+2) Run Supabase SQL once: supabase/sql/2025-08-12_readings_delete_policy.sql.
+3) Visit /results/manage while signed in and delete a test row to confirm backend + RLS are correct.
+4) Wire the tooltip near your chart by replacing your <Tooltip /> with:
    <Tooltip content={
      <InjectDeleteIntoRechartsTooltip onLocalDelete={(id) =>
        setReadings(prev => prev.filter(r => r.id !== id))
      } />
    }/>
-3) If your Results page is a Server Component, render the chart via a client component or dynamic import (ssr: false). See page.server.example.tsx.
-4) Run the SQL once in Supabase.
+   Ensure the dataset you pass to the chart includes an id field for each point.
 
-Git
+Path alias
+- Files use @/… If you don’t have this alias, either:
+  - Add to tsconfig.json:
+    {
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@/*": ["./*"] }
+      }
+    }
+  - Or change imports to relative paths (e.g. ../../utils/supabase/client).
+
+Git commands
 - Current branch:
   git add -A
-  git commit -m "feat(results): Delete button in chart tooltip + RLS delete policy"
+  git commit -m "feat(results): manage page + tooltip delete; RLS policy for safe deletes"
   git push
 
 - New branch:
-  git switch -c feat/results-delete-tooltip
+  git switch -c feat/results-delete-complete
   git add -A
-  git commit -m "feat(results): Delete button in chart tooltip + RLS delete policy"
-  git push -u origin feat/results-delete-tooltip
+  git commit -m "feat(results): manage page + tooltip delete; RLS policy for safe deletes"
+  git push -u origin feat/results-delete-complete
+
+Troubleshooting
+- 401/403 when deleting? Confirm: signed-in session, readings.user_id = auth.uid(), RLS enabled, policy & grant applied.
+- Button not visible near chart? Ensure the chart renders on the client (wrap with a client component or use dynamic import with ssr: false) and that you replaced the Tooltip with the one provided.
+- Still stuck? Send me your app/results/... chart component and I’ll ship a targeted patch.

@@ -22,7 +22,6 @@ export default function ResultsChartExample({ initialReadings }: { initialReadin
           <XAxis dataKey="date" tickFormatter={(d) => new Date(d).toLocaleDateString()} />
           <YAxis />
           <Tooltip content={
-            // NOTE: must replace your existing <Tooltip /> with this
             <InjectDeleteIntoRechartsTooltip onLocalDelete={(id) => {
               setReadings(prev => prev.filter(r => r.id !== id));
             }} />
