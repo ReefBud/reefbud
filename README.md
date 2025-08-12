@@ -1,14 +1,36 @@
-# ReefBud v2.3.0 - Chemist selections and Products create
+Delete readings feature patch
+=============================
 
-Contents:
-- app/chemist/page.tsx - Chemist shows only product selectors and saves to preferred_products
-- components/ProductPicker.tsx - lists global Tropic Marin and user products for a parameter
-- components/ProductCreateForm.tsx - add custom dosing products
-- app/products/page.tsx - list and create products
-- sql/2025-08-12-preferred-products.sql - DB fixer for preferred_products and RLS
+What this adds
+- Supabase policy that lets a signed-in user delete only their own readings
+- Grant for authenticated role so PostgREST accepts DELETE
+- A small React button component to trigger the delete
+- Example list integration that also removes the item from state and calendar
 
-Apply:
-1) Copy these files into your repo in the same paths.
-2) Run the SQL file in Supabase SQL Editor.
-3) Commit and push:
-   git add -A && git commit -m "v2.3.0: Chemist preferred product saving + custom products page" && git push origin main
+Apply the SQL
+1. Open Supabase SQL editor.
+2. Paste and run: supabase/sql/2025-08-12_readings_delete_policy.sql
+   You can safely run it more than once.
+
+Wire up the UI
+1. Copy app/components/DeleteReadingButton.tsx into your project.
+2. Import and render <DeleteReadingButton id={reading.id} onDeleted={...} /> wherever you list readings.
+3. In onDeleted, remove the item from your list state and calendar events.
+
+Git commit and push
+If you are already on a feature branch:
+    git add -A
+    git commit -m "feat(results): allow deleting readings safely with RLS and UI button"
+    git push
+
+If you want to create a new branch first:
+    git switch -c feat/delete-readings
+    git add -A
+    git commit -m "feat(results): allow deleting readings safely with RLS and UI button"
+    git push -u origin feat/delete-readings
+
+If you are unsure which branch you are on:
+    git rev-parse --abbrev-ref HEAD
+
+Deploy
+Vercel will deploy on push if your project is already connected.
