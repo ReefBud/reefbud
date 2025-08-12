@@ -1,24 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 type ParamKey = 'alk' | 'ca' | 'mg' | 'po4' | 'no3' | 'salinity';
 
 const PARAMS = [
-    { key: 'alk', label: 'Alkalinity (dKH)' },
-    { key: 'ca', label: 'Calcium (ppm)' },
-    { key: 'mg', label: 'Magnesium (ppm)' },
-    { key: 'po4', label: 'Phosphate (ppm)' },
-    { key: 'no3', label: 'Nitrate (ppm)' },
-    { key: 'salinity', label: 'Salinity (ppt)' },
+    { key: 'alk', label: 'Alkalinity (dKH)', example: '7–12' },
+    { key: 'ca', label: 'Calcium (ppm)', example: '400–450' },
+    { key: 'mg', label: 'Magnesium (ppm)', example: '1350–1450' },
+    { key: 'po4', label: 'Phosphate (ppm)', example: '0.03–0.1' },
+    { key: 'no3', label: 'Nitrate (ppm)', example: '5–15' },
+    { key: 'salinity', label: 'Salinity (ppt)', example: '30–40' },
 ] as const;
 
 export default function ResultForm({
     defaultParam = 'alk',
+    tankId,
     onSaved,
 }: {
     defaultParam?: ParamKey;
+    tankId: string;
     onSaved?: () => void;
 }) {
     const [param, setParam] = useState<ParamKey>(defaultParam);
@@ -28,9 +30,13 @@ export default function ResultForm({
         const pad = (n: number) => String(n).padStart(2, '0');
         return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
     });
-    const [increasedBy, setIncreasedBy] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    const placeholder = useMemo(
+        () => PARAMS.find(p => p.key === param)?.example || '',
+                                [param]
+    );
 
     async function save() {
         setError(null);
@@ -43,27 +49,18 @@ export default function ResultForm({
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Please sign in');
 
-            const baseRow: any = {
+            const row = {
                 user_id: user.id,
+                tank_id: tankId,
                 measured_at: new Date(measuredAt).toISOString(),
                 value: n,
                 parameter_key: param,
             };
-            if (increasedBy.trim()) {
-                const inc = Number(increasedBy);
-                if (!isFinite(inc)) throw new Error('Increased by must be a number');
-                baseRow.increased_by = inc;
-            }
 
-            let { error } = await supabase.from('results').insert(baseRow);
-            if (error && /increased_by/.test(error.message)) {
-                delete baseRow.increased_by;
-                const { error: e2 } = await supabase.from('results').insert(baseRow);
-                if (e2) throw e2;
-            } else if (error) throw error;
+            const { error } = await supabase.from('results').insert(row);
+            if (error) throw error;
 
             setValue('');
-            setIncreasedBy('');
             onSaved?.();
         } catch (e: any) {
             setError(e?.message || 'Could not save reading');
@@ -75,7 +72,7 @@ export default function ResultForm({
     return (
         <div className="rounded-lg border p-3">
         <div className="mb-2 text-sm font-medium">Add a reading</div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <label className="text-sm">
         <span className="mb-1 block opacity-80">Parameter</span>
         <select
@@ -83,9 +80,12 @@ export default function ResultForm({
         value={param}
         onChange={e => setParam(e.target.value as ParamKey)}
         >
-        {PARAMS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+        {PARAMS.map(p => (
+            <option key={p.key} value={p.key}>{p.label}</option>
+        ))}
         </select>
         </label>
+
         <label className="text-sm">
         <span className="mb-1 block opacity-80">Value</span>
         <input
@@ -94,9 +94,10 @@ export default function ResultForm({
         className="w-full rounded-md border px-2 py-1.5"
         value={value}
         onChange={e => setValue(e.target.value)}
-        placeholder="e.g., 8.3"
+        placeholder={placeholder}
         />
         </label>
+
         <label className="text-sm">
         <span className="mb-1 block opacity-80">Date & Time</span>
         <input
@@ -106,19 +107,10 @@ export default function ResultForm({
         onChange={e => setMeasuredAt(e.target.value)}
         />
         </label>
-        <label className="text-sm">
-        <span className="mb-1 block opacity-80">Increased by (optional)</span>
-        <input
-        type="number"
-        step="any"
-        className="w-full rounded-md border px-2 py-1.5"
-        value={increasedBy}
-        onChange={e => setIncreasedBy(e.target.value)}
-        placeholder="e.g., 0.2"
-        />
-        </label>
         </div>
+
         {error && <div className="mt-2 text-sm text-red-600">Error: {error}</div>}
+
         <div className="mt-3 flex justify-end">
         <button
         className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-gray-50"
