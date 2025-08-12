@@ -3,37 +3,23 @@
 import { useState } from 'react';
 import { createClient } from '@/utils/supabase/client';
 
-export function DeleteReadingButton({
-  id,
-  onDeleted,
-  className,
-}: { id: string; onDeleted?: (id: string) => void; className?: string }) {
+export default function DeleteReadingButton({ id, onDeleted }: { id: string; onDeleted?: (id: string) => void }) {
   const [busy, setBusy] = useState(false);
   const supabase = createClient();
-
-  async function handleDelete() {
-    if (!confirm('Delete this reading?')) return;
-    setBusy(true);
-    const { error } = await supabase.from('readings').delete().eq('id', id);
-    setBusy(false);
-    if (error) {
-      alert(error.message);
-      return;
-    }
-    onDeleted?.(id);
-  }
-
   return (
     <button
       disabled={busy}
-      className={className}
-      onClick={handleDelete}
-      title="Delete reading"
-      aria-label="Delete reading"
+      onClick={async () => {
+        if (!confirm('Delete this reading?')) return;
+        setBusy(true);
+        const { error } = await supabase.from('readings').delete().eq('id', id);
+        setBusy(false);
+        if (error) { alert(error.message); return; }
+        onDeleted?.(id);
+      }}
+      className="rounded-md border px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50"
     >
-      {busy ? 'Deleting…' : '🗑'}
+      {busy ? 'Deleting…' : 'Delete'}
     </button>
   );
 }
-
-export default DeleteReadingButton;
