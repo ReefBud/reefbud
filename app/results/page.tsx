@@ -1,9 +1,9 @@
-// app/results/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import ResultsChart from '../../components/ResultsChart';
+import ResultForm from '../components/ResultForm';
 
 type Row = {
   id: string;
@@ -11,7 +11,6 @@ type Row = {
   measured_at: string;
   parameter_key?: string | null;
   parameter?: string | null;
-  parameter_id?: number | null;
 };
 
 const PARAMS = [
@@ -23,105 +22,78 @@ const PARAMS = [
 { key: 'salinity', label: 'Salinity', unit: 'ppt' },
 ] as const;
 
+type ParamKey = typeof PARAMS[number]['key'];
+
 export default function ResultsPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [paramKey, setParamKey] = useState<typeof PARAMS[number]['key']>('alk');
+  const [paramKey, setParamKey] = useState<ParamKey>('alk');
 
-  async function load() {
+  async function load(selected: ParamKey) {
     setLoading(true);
     setError(null);
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Please sign in');
 
-      // Try wider shape first
-      const q1 = await supabase
+      let { data, error } = await supabase
       .from('results')
-      .select('id, value, measured_at, parameter_key, parameter, parameter_id')
+      .select('id, value, measured_at, parameter_key, parameter')
       .eq('user_id', user.id)
+      .eq('parameter_key', selected)
       .order('measured_at', { ascending: true });
 
-      if (q1.error) {
-        // Fallback to minimal shape, then normalize to Row
-        const q2 = await supabase
+      if (error || !data?.length) {
+        const res2 = await supabase
         .from('results')
-        .select('id, value, measured_at')
+        .select('id, value, measured_at, parameter')
         .eq('user_id', user.id)
+        .eq('parameter', selected)
         .order('measured_at', { ascending: true });
-        if (q2.error) throw q2.error;
-
-        const normalized: Row[] = (q2.data ?? []).map((r: any) => ({
-          id: String(r.id),
-                                                                   value: r.value ?? null,
-                                                                   measured_at: r.measured_at,
-                                                                   parameter_key: null,
-                                                                   parameter: null,
-                                                                   parameter_id: null,
-        }));
-        setRows(normalized);
-      } else {
-        setRows((q1.data as unknown as Row[]) ?? []);
+        if (!res2.error && res2.data) {
+          data = res2.data.map((r: any) => ({ ...r, parameter_key: r.parameter }));
+        }
       }
+      setRows((data as Row[]) ?? []);
     } catch (e: any) {
-      setError(e?.message || 'Failed to load results');
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(paramKey); }, [paramKey]);
 
   const unit = useMemo(() => PARAMS.find(p => p.key === paramKey)?.unit, [paramKey]);
-
-  const filtered = useMemo(() => {
-    return rows
-    .filter(r => {
-      if (r.parameter_key) return r.parameter_key === paramKey;
-      if (r.parameter) return r.parameter === paramKey;
-      return true;
-    })
-    .map(r => ({
-      id: r.id,
-      measured_at: r.measured_at,
-      value: Number(r.value ?? 0),
-               parameter_key: r.parameter_key ?? null,
-               parameter: r.parameter ?? null,
-    }));
-  }, [rows, paramKey]);
+  const yDomain = paramKey === 'salinity' ? [30, 40] : undefined;
 
   return (
     <div className="mx-auto max-w-4xl p-4 space-y-4">
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex justify-between">
     <div>
     <h1 className="text-xl font-semibold">Results</h1>
-    <p className="text-sm text-gray-600">Click a point in the chart to select it, then press Remove.</p>
+    <p className="text-sm text-gray-600">Click a point to select it, then Remove.</p>
     </div>
-    <div className="flex items-center gap-2">
-    <label htmlFor="param" className="text-sm">Parameter</label>
     <select
-    id="param"
     className="rounded-md border px-2 py-1 text-sm"
     value={paramKey}
-    onChange={e => setParamKey(e.target.value as any)}
+    onChange={(e) => setParamKey(e.target.value as ParamKey)}
     >
     {PARAMS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
     </select>
     </div>
-    </div>
-
+    <ResultForm defaultParam={paramKey} onSaved={() => load(paramKey)} />
     {loading && <div>Loading…</div>}
-    {error && <div className="text-red-600">Error: {error}</div>}
-
-    {!loading && !error ? (
+    {error && <div className="text-red-600">{error}</div>}
+    {!loading && !error && (
       <ResultsChart
-      data={filtered as any}
+      data={rows.map(r => ({ ...r, value: Number(r.value ?? 0) }))}
       unit={unit}
+      yDomain={yDomain}
       onPointDeleted={(id) => setRows(prev => prev.filter(x => x.id !== id))}
       />
-    ) : null}
+    )}
     </div>
   );
 }
