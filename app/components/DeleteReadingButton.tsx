@@ -6,15 +6,15 @@ import { createClient } from '@/utils/supabase/client';
 export type DeleteReadingButtonProps = {
   id: string;
   onDeleted?: (id: string) => void;
-  className?: string;   // <- add this
-  label?: string;       // <- optional label
+  className?: string;
+  label?: string;
 };
 
 export default function DeleteReadingButton({
   id,
   onDeleted,
   className,
-  label = 'Delete',
+  label = 'Delete'
 }: DeleteReadingButtonProps) {
   const [busy, setBusy] = useState(false);
   const supabase = createClient();
@@ -33,13 +33,13 @@ export default function DeleteReadingButton({
 
   return (
     <button
-    disabled={busy}
-    className={className ?? 'inline-flex items-center justify-center rounded-md border px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50'}
-    onClick={handleDelete}
-    title="Delete reading"
-    aria-label="Delete reading"
+      disabled={busy}
+      className={className ?? "inline-flex items-center justify-center rounded-md border px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"}
+      onClick={handleDelete}
+      title="Delete reading"
+      aria-label="Delete reading"
     >
-    {busy ? 'Deleting…' : label}
+      {busy ? 'Deleting…' : label}
     </button>
   );
 }

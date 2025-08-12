@@ -9,4 +9,5 @@ export function createClient() {
   }
   return createSupabaseClient(url, anon);
 }
+
 export default createClient;
