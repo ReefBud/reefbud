@@ -125,12 +125,12 @@
         const trend=doseChange>0?'up':(doseChange<0?'down':'muted');
         const verb=doseChange>0?'Increase':(doseChange<0?'Decrease':'No change');
         const tr=document.createElement('tr');
-        tr.innerHTML=\`
-          <td><strong>\${r.key}</strong> <span class="small">(\${(r.current ?? '—')} → \${(r.target ?? '—')} \${r.unit})</span></td>
-          <td>\${isFinite(r.currentDose)?r.currentDose:0} <span class="muted">ml/day</span></td>
-          <td><span class="chip \${trend}">\${verb} \${Math.abs(roundTo(doseChange,roundStep))} ml/day</span></td>
-          <td><strong>\${roundTo(newDose,roundStep)}</strong> <span class="muted">ml/day</span></td>
-          <td>\${isFinite(days)&&r.delta!==0?days+' day'+(days>1?'s':''):'—'}</td>\`;
+        tr.innerHTML=`
+          <td><strong>${r.key}</strong> <span class="small">(${(r.current ?? '—')} → ${(r.target ?? '—')} ${r.unit})</span></td>
+          <td>${isFinite(r.currentDose)?r.currentDose:0} <span class="muted">ml/day</span></td>
+          <td><span class="chip ${trend}">${verb} ${Math.abs(roundTo(doseChange,roundStep))} ml/day</span></td>
+          <td><strong>${roundTo(newDose,roundStep)}</strong> <span class="muted">ml/day</span></td>
+          <td>${isFinite(days)&&r.delta!==0?days+' day'+(days>1?'s':''):'—'}</td>`;
         tbody.appendChild(tr);
       });
 
@@ -144,6 +144,13 @@
       document.getElementById('resultsWrap').style.display='none';
     });
 
+    // Hooks your Next.js page calls to prefill data.
+    // (No DB calls inside this file.)
+    // window.DosingCalculator.setCurrentParams({ alk, ca, mg })
+    // window.DosingCalculator.setTargetParams({ alk, ca, mg })
+    // window.DosingCalculator.setTankVolume(liters, 'L'|'gal')
+    // window.DosingCalculator.setCurrentDoses({ alk, ca, mg })
+    // window.DosingCalculator.setConfig({...})
     window.DosingCalculator={
       setTankVolume(value,units='L'){const u=(units==='gal')?'gal':'L';document.getElementById('volUnit').value=u;document.getElementById('volValue').value=value;updateLiters();},
       setCurrentParams({alk,ca,mg}={}){if(alk!=null)document.getElementById('alkCurrent').value=alk;if(ca!=null)document.getElementById('caCurrent').value=ca;if(mg!=null)document.getElementById('mgCurrent').value=mg;},
