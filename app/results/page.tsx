@@ -10,7 +10,6 @@ type Row = {
   value: number | null;
   measured_at: string;
   parameter_key?: string | null;
-  parameter?: string | null;
 };
 
 const PARAMS = [
@@ -31,22 +30,22 @@ export default function ResultsPage() {
   const [paramKey, setParamKey] = useState<ParamKey>('alk');
   const [tankId, setTankId] = useState<string | null>(null);
 
-  // Fetch user's first tank
+  // Get first tank for the user
   useEffect(() => {
     async function fetchTank() {
       try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
+        const { data: { user }, error: userErr } = await supabase.auth.getUser();
+        if (userErr) throw userErr;
         if (!user) throw new Error('Please sign in');
 
-        const { data: tanks, error: tanksError } = await supabase
+        const { data: tanks, error: tanksErr } = await supabase
         .from('tanks')
         .select('id')
         .eq('user_id', user.id)
         .order('created_at', { ascending: true })
         .limit(1);
 
-        if (tanksError) throw tanksError;
+        if (tanksErr) throw tanksErr;
         if (!tanks?.length) throw new Error('No tanks found for this user');
 
         setTankId(tanks[0].id);
@@ -64,27 +63,24 @@ export default function ResultsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Please sign in');
 
-      let { data, error } = await supabase
+      // Resolve parameter_id by key
+      const { data: p, error: pErr } = await supabase
+      .from('parameters')
+      .select('id')
+      .eq('key', selected)
+      .single();
+      if (pErr) throw pErr;
+      if (!p?.id) throw new Error(`Parameter id not found for "${selected}"`);
+
+      const { data, error } = await supabase
       .from('results')
-      .select('id, value, measured_at, parameter_key, parameter')
+      .select('id, value, measured_at, parameter_key')
       .eq('user_id', user.id)
       .eq('tank_id', selectedTankId)
-      .eq('parameter_key', selected)
+      .eq('parameter_id', p.id)
       .order('measured_at', { ascending: true });
 
-      if (error || !data?.length) {
-        const res2 = await supabase
-        .from('results')
-        .select('id, value, measured_at, parameter')
-        .eq('user_id', user.id)
-        .eq('tank_id', selectedTankId)
-        .eq('parameter', selected)
-        .order('measured_at', { ascending: true });
-
-        if (!res2.error && res2.data) {
-          data = res2.data.map((r: any) => ({ ...r, parameter_key: r.parameter }));
-        }
-      }
+      if (error) throw error;
       setRows((data as Row[]) ?? []);
     } catch (e: any) {
       setError(e.message);
@@ -93,7 +89,7 @@ export default function ResultsPage() {
     }
   }
 
-  // Load whenever parameter or tank changes
+  // Load when param or tank changes
   useEffect(() => {
     if (tankId) load(paramKey, tankId);
   }, [paramKey, tankId]);
@@ -103,7 +99,7 @@ export default function ResultsPage() {
                          [paramKey]
     );
 
-    // Smart yDomain: prefer target domain, but expand to include data
+    // Y-axis: target domain, expanded to fit data
     const yDomain = useMemo<[number, number] | undefined>(() => {
       const base = PARAMS.find(p => p.key === paramKey)?.domain;
       if (!rows.length) return base;
@@ -113,39 +109,33 @@ export default function ResultsPage() {
       .filter(v => Number.isFinite(v)) as number[];
       if (!values.length) return base;
 
-      const dataMin = Math.min(...values);
-      const dataMax = Math.max(...values);
+      let min = Math.min(...values);
+      let max = Math.max(...values);
 
-      let min = base ? Math.min(base[0], dataMin) : dataMin;
-      let max = base ? Math.max(base[1], dataMax) : dataMax;
-
-      // tiny padding so points don’t sit on the border
+      if (base) {
+        min = Math.min(min, base[0]);
+        max = Math.max(max, base[1]);
+      }
       const span = Math.max(1e-9, max - min);
       const pad = Math.max(span * 0.05, 0.001);
-      min = Math.max(0, min - pad); // clamp to 0 for nutrient params
-      max = max + pad;
-
-      return [min, max];
+      return [Math.max(0, min - pad), max + pad];
     }, [rows, paramKey]);
 
-    // Handle optimistic add from the form
-    function handleSaved(inserted: { id: string; measured_at: string; value: number; parameter_key?: string | null; parameter?: string | null; }) {
-      // Only add if this reading belongs to the currently selected param
-      const key = inserted.parameter_key ?? inserted.parameter ?? null;
-      if (key !== paramKey) return;
+    // Optimistic add (keeps delete working by using real id)
+    function handleSaved(inserted: { id: string; measured_at: string; value: number; parameter_key?: string | null; }) {
+      // Only add if reading matches the currently selected param
+      if ((inserted.parameter_key ?? null) !== paramKey) return;
       setRows(prev => {
-        // de-dup by id in case a reload happens at the same time
-        const exists = prev.some(r => r.id === inserted.id);
-        if (exists) return prev;
+        if (prev.some(r => r.id === inserted.id)) return prev;
         const next: Row = {
           id: inserted.id,
           measured_at: inserted.measured_at,
           value: inserted.value,
           parameter_key: inserted.parameter_key ?? null,
-          parameter: inserted.parameter ?? null,
         };
-        const merged = [...prev, next].sort((a, b) => +new Date(a.measured_at) - +new Date(b.measured_at));
-        return merged;
+        return [...prev, next].sort(
+          (a, b) => +new Date(a.measured_at) - +new Date(b.measured_at)
+        );
       });
     }
 

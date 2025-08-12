@@ -19,7 +19,6 @@ type InsertedRow = {
     measured_at: string;
     value: number;
     parameter_key?: string | null;
-    parameter?: string | null;
 };
 
 export default function ResultForm({
@@ -57,47 +56,40 @@ export default function ResultForm({
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Please sign in');
 
-            // 1) Resolve parameter_id by key (your parameters table has no tank_id column)
+            // Resolve parameter_id by key (your parameters table has no tank_id column)
             const { data: paramRows, error: paramErr } = await supabase
             .from('parameters')
             .select('id')
             .eq('key', param)
             .limit(1);
-
             if (paramErr) throw paramErr;
-            if (!paramRows?.length) {
-                throw new Error(`Parameter definition not found for key "${param}". Please add it in "parameters".`);
-            }
+            if (!paramRows?.length) throw new Error(`Parameter definition not found for key "${param}".`);
 
             const parameterId = paramRows[0].id;
 
-            // 2) Insert result and return the inserted row (so we can show it instantly)
             const row = {
                 user_id: user.id,
                 tank_id: tankId,
                 parameter_id: parameterId,
                 measured_at: new Date(measuredAt).toISOString(),
                 value: n,
-                parameter_key: param,
+                parameter_key: param, // keep for convenience in UI
             };
 
             const { data: inserted, error } = await supabase
             .from('results')
             .insert(row)
-            .select('id, measured_at, value, parameter_key, parameter')
+            .select('id, measured_at, value, parameter_key')
             .single();
-
             if (error) throw error;
 
-            // Clear input and optimistically update parent
             setValue('');
             if (inserted) {
                 onSaved?.({
                     id: String(inserted.id),
                           measured_at: inserted.measured_at,
                           value: Number(inserted.value ?? 0),
-                          parameter_key: inserted.parameter_key ?? inserted.parameter ?? null,
-                          parameter: inserted.parameter ?? null,
+                          parameter_key: inserted.parameter_key ?? null,
                 });
             }
         } catch (e: any) {
