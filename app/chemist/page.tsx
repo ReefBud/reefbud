@@ -5,13 +5,12 @@ import { supabase } from "@/lib/supabaseClient";
 import ProductPicker from "@/components/ProductPicker";
 
 type Tank = { id: string };
-type Param = { id: number; key: "alk" | "ca" | "mg" | "po4" | "no3"; display_name: string };
+type Param = { id: number; key: string; display_name: string };
 
 export default function Chemist() {
   const [userId, setUserId] = useState<string>();
   const [tank, setTank] = useState<Tank>();
   const [params, setParams] = useState<Param[]>([]);
-  // selected product id per parameter key
   const [selected, setSelected] = useState<Record<string, string | undefined>>({});
 
   useEffect(() => {
@@ -20,35 +19,33 @@ export default function Chemist() {
       if (!user) return;
       setUserId(user.id);
 
-      // find-or-create default tank
+      // ensure a tank exists
       const { data: tanks } = await supabase.from("tanks").select("id").eq("user_id", user.id).limit(1);
-      let tk: Tank | undefined = tanks?.[0];
+      let tk = tanks?.[0] as Tank | undefined;
       if (!tk) {
-        const { data: created } = await supabase
-        .from("tanks")
+        const { data: created } = await supabase.from("tanks")
         .insert({ user_id: user.id, name: "My Tank", volume_value: 200, volume_unit: "L" })
-        .select()
-        .single();
-        tk = created as Tank | undefined;
+        .select("id").single();
+        tk = created || undefined;
       }
       if (!tk) return;
       setTank(tk);
 
       // load parameters
-      const { data: p } = await supabase.from("parameters").select("id, key, display_name");
-      const typed = (p || []).filter(Boolean) as Param[];
-      setParams(typed);
+      const { data: p } = await supabase.from("parameters").select("id,key,display_name");
+      const ps = (p || []) as Param[];
+      setParams(ps);
 
       // load existing preferred products for this tank
       const { data: prefs } = await supabase
       .from("preferred_products")
-      .select("parameter_id, product_id")
+      .select("parameter_id,product_id")
       .eq("user_id", user.id)
       .eq("tank_id", tk.id);
 
-      // map param_id -> key, then fill selected
       const idToKey: Record<number, string> = {};
-      typed.forEach(pr => { idToKey[pr.id] = pr.key; });
+      ps.forEach(pr => { idToKey[pr.id] = pr.key; });
+
       const sel: Record<string, string> = {};
       (prefs || []).forEach((r: any) => {
         const key = idToKey[r.parameter_id];
@@ -62,12 +59,7 @@ export default function Chemist() {
     if (!userId || !tank || !productId) return;
     await supabase
     .from("preferred_products")
-    .upsert({
-      user_id: userId,
-      tank_id: tank.id,
-      parameter_id: paramId,
-      product_id: productId,
-    }, { onConflict: "user_id,tank_id,parameter_id" })
+    .upsert({ user_id: userId, tank_id: tank.id, parameter_id: paramId, product_id: productId }, { onConflict: "user_id,tank_id,parameter_id" })
     .select();
   }
 
@@ -79,7 +71,7 @@ export default function Chemist() {
     <section className="card">
     <h2 className="text-lg font-semibold">Chemist</h2>
     <p className="text-sm text-gray-600">
-    Choose the product you use for each parameter. The Calculator will use these selections and each product’s potency.
+    Choose the product you use for each parameter. The Calculator will read these and use each product’s potency.
     </p>
     </section>
 
