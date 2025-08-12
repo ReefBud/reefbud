@@ -13,7 +13,7 @@ export default function ResultsPage() {
   const [tank, setTank] = useState<Tank | undefined>();
   const [params, setParams] = useState<Param[]>([]);
   const [selectedParamId, setSelectedParamId] = useState<number | "">("");
-  const [rows, setRows] = useState<{ measured_at: string; value: number }[]>([]);
+  const [rows, setRows] = useState<{ id: string; measured_at: string; value: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -47,7 +47,7 @@ export default function ResultsPage() {
   async function loadData(paramId: number, tkId: string) {
     const { data, error } = await supabase
       .from("results")
-      .select("measured_at, value")
+      .select('id, measured_at, value')
       .eq("user_id", userId)
       .eq("tank_id", tkId)
       .eq("parameter_id", paramId)
@@ -120,7 +120,11 @@ export default function ResultsPage() {
 
         {err && <div className="text-sm text-red-600">{err}</div>}
 
-        <ResultsChart data={rows} unit={selectedParam?.unit} />
+        <ResultsChart
+        data={rows}
+        unit={selectedParam?.unit}
+        onPointDeleted={(id) => setRows(prev => prev.filter(r => r.id !== id))}
+        />
       </section>
     </main>
   );

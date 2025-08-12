@@ -1,43 +1,49 @@
-// app/components/DeleteReadingButton.tsx
 'use client';
 import { useState } from 'react';
-import { createClient } from '@/utils/supabase/client';
+import { supabase } from '@/lib/supabaseClient';
 
-export type DeleteReadingButtonProps = {
+type Props = {
   id: string;
   onDeleted?: (id: string) => void;
   className?: string;
   label?: string;
+  tableName?: string; // default 'results'
 };
 
 export default function DeleteReadingButton({
   id,
   onDeleted,
   className,
-  label = 'Delete'
-}: DeleteReadingButtonProps) {
+  label = 'Delete',
+  tableName = 'results',
+}: Props) {
   const [busy, setBusy] = useState(false);
-  const supabase = createClient();
 
   async function handleDelete() {
-    if (!confirm('Delete this reading?')) return;
+    if (busy) return;
+    if (!confirm('Delete this result?')) return;
     setBusy(true);
-    const { error } = await supabase.from('readings').delete().eq('id', id);
-    setBusy(false);
-    if (error) {
-      alert(error.message);
-      return;
+    try {
+      const { error } = await supabase.from(tableName).delete().eq('id', id);
+      if (error) throw error;
+      onDeleted?.(id);
+    } catch (e: any) {
+      alert(e?.message || 'Could not delete result.');
+    } finally {
+      setBusy(false);
     }
-    onDeleted?.(id);
   }
 
   return (
     <button
       disabled={busy}
-      className={className ?? "inline-flex items-center justify-center rounded-md border px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"}
+      className={
+        className ??
+        'inline-flex items-center justify-center rounded-md border px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60'
+      }
       onClick={handleDelete}
-      title="Delete reading"
-      aria-label="Delete reading"
+      title="Delete result"
+      aria-label="Delete result"
     >
       {busy ? 'Deleting…' : label}
     </button>

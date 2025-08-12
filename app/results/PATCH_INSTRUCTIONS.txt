@@ -1,0 +1,26 @@
+Minimal edits you need to make to app/results/page.tsx so the Delete button works from the line chart:
+
+1) Add `id` to the local state type for rows:
+   BEFORE:
+     const [rows, setRows] = useState<{ measured_at: string; value: number }[]>([]);
+   AFTER:
+     const [rows, setRows] = useState<{ id: string; measured_at: string; value: number }[]>([]);
+
+2) When you load data from Supabase, select the `id` column alongside measured_at and value:
+   BEFORE:
+     .select('measured_at, value')
+   AFTER:
+     .select('id, measured_at, value')
+
+3) Pass the onPointDeleted callback to the chart so the point disappears from the series after a successful delete:
+   BEFORE:
+     <ResultsChart data={rows} unit={selectedParam?.unit} />
+   AFTER:
+     <ResultsChart
+       data={rows}
+       unit={selectedParam?.unit}
+       onPointDeleted={(id) => setRows(prev => prev.filter(r => r.id !== id))}
+     />
+
+4) (Optional but recommended) If your <ResultForm /> is on the same page, pass an `onSaved` prop to reload:
+     <ResultForm onSaved={() => loadData(Number(selectedParamId), tank!.id)} />

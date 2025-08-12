@@ -1,53 +1,49 @@
 // app/results/manage/page.tsx
 'use client';
 import { useEffect, useState } from 'react';
-import { createClient } from '@/utils/supabase/client';
+import { supabase } from '@/lib/supabaseClient';
 import DeleteReadingButton from '@/app/components/DeleteReadingButton';
 
-type Reading = {
-  id: string;
-  value: number | null;
-  measured_at: string;
-};
+type Row = { id: string; value: number | null; measured_at: string };
 
 export default function ManageResultsPage() {
-  const supabase = createClient();
-  const [readings, setReadings] = useState<Reading[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     setError(null);
-    const { data, error } = await supabase
-      .from('readings')
-      .select('id, value, measured_at')
-      .order('measured_at', { ascending: false })
-      .limit(200);
-    if (error) setError(error.message);
-    setReadings((data as Reading[]) ?? []);
-    setLoading(false);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Please sign in');
+      const { data, error } = await supabase
+        .from('results')
+        .select('id, value, measured_at')
+        .eq('user_id', user.id)
+        .order('measured_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setRows((data as Row[]) ?? []);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load results');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(() => {
-    load();
-    const channel = supabase
-      .channel('readings-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'readings' }, () => load())
-      .subscribe();
-    return () => { supabase.removeChannel(channel) };
-  }, []);
+  useEffect(() => { load(); }, []);
 
   return (
-    <div className="mx-auto max-w-3xl p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Manage Results</h1>
-      <p className="text-sm opacity-70">Delete incorrect readings quickly. This list is private to your account.</p>
+    <div className="mx-auto max-w-3xl space-y-4 p-4">
+      <h1 className="text-xl font-semibold">Manage Results</h1>
+      <p className="text-sm text-gray-600">Remove an incorrect reading.</p>
 
       {loading && <div>Loading…</div>}
       {error && <div className="text-red-600">Error: {error}</div>}
 
       <ul className="divide-y rounded-lg border">
-        {readings.map(r => (
+        {rows.map(r => (
           <li key={r.id} className="flex items-center justify-between p-3">
             <div>
               <div className="font-medium">Value: {r.value ?? '—'}</div>
@@ -56,11 +52,11 @@ export default function ManageResultsPage() {
             <DeleteReadingButton
               id={r.id}
               label="Remove"
-              onDeleted={(id) => setReadings(prev => prev.filter(x => x.id !== id))}
+              onDeleted={(id) => setRows(prev => prev.filter(x => x.id !== id))}
             />
           </li>
         ))}
-        {!loading && readings.length === 0 && (
+        {!loading && rows.length === 0 && (
           <li className="p-3 text-sm opacity-70">No readings yet.</li>
         )}
       </ul>
