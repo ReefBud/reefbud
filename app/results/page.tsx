@@ -66,7 +66,8 @@ export default function ResultsPage() {
   useEffect(() => { load(paramKey); }, [paramKey]);
 
   const unit = useMemo(() => PARAMS.find(p => p.key === paramKey)?.unit, [paramKey]);
-  const yDomain = paramKey === 'salinity' ? [30, 40] : undefined;
+  const yDomain: [number, number] | undefined =
+  paramKey === 'salinity' ? [30, 40] : undefined;
 
   return (
     <div className="mx-auto max-w-4xl p-4 space-y-4">
