@@ -49,9 +49,26 @@ export default function ResultForm({
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Please sign in');
 
+            // 1. Look up the parameter_id for this param + tank
+            const { data: paramRows, error: paramError } = await supabase
+            .from('parameters')
+            .select('id')
+            .eq('key', param)
+            .eq('tank_id', tankId)
+            .limit(1);
+
+            if (paramError) throw paramError;
+            if (!paramRows || paramRows.length === 0) {
+                throw new Error(`No parameter found for ${param} in this tank`);
+            }
+
+            const parameterId = paramRows[0].id;
+
+            // 2. Insert the result with parameter_id
             const row = {
                 user_id: user.id,
                 tank_id: tankId,
+                parameter_id: parameterId,
                 measured_at: new Date(measuredAt).toISOString(),
                 value: n,
                 parameter_key: param,
