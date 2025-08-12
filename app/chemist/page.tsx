@@ -1,204 +1,103 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase/client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import ProductPicker from "@/components/ProductPicker";
 
-type ParamKey = "alk" | "ca" | "mg" | "po4" | "no3";
-type Tank = { id: string; name?: string | null };
+type Tank = { id: string };
+type Param = { id: number; key: "alk" | "ca" | "mg" | "po4" | "no3"; display_name: string };
 
-type Targets = Record<ParamKey, number | null>;
-
-const keys: ParamKey[] = ["alk","ca","mg","po4","no3"];
-const labels: Record<ParamKey, string> = {
-  alk: "Alkalinity (dKH)",
-  ca: "Calcium (ppm)",
-  mg: "Magnesium (ppm)",
-  po4: "Phosphate (ppm)",
-  no3: "Nitrate (ppm)"
-};
-
-export default function Chemist(): JSX.Element {
-  const [loading, setLoading] = useState<boolean>(true);
-  const [tank, setTank] = useState<Tank | null>(null);
-  const [targets, setTargets] = useState<Targets>({
-    alk: 8.3, ca: 430, mg: 1350, po4: 0.05, no3: 10
-  });
-  const [preferred, setPreferred] = useState<Record<ParamKey, string|undefined>>({
-    alk: undefined, ca: undefined, mg: undefined, po4: undefined, no3: undefined
-  });
-
-  const inputClass =
-    "w-full rounded-xl border border-gray-200 px-3 py-2 shadow-sm " +
-    "bg-gradient-to-b from-gray-50 to-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400";
+export default function Chemist() {
+  const [userId, setUserId] = useState<string>();
+  const [tank, setTank] = useState<Tank>();
+  const [params, setParams] = useState<Param[]>([]);
+  // selected product id per parameter key
+  const [selected, setSelected] = useState<Record<string, string | undefined>>({});
 
   useEffect(() => {
-    let live = true;
     (async () => {
-      const { data: { user } = { user: null } } = await supabase.auth.getUser();
-      if (!user) { setLoading(false); return; }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setUserId(user.id);
 
-      // Ensure a tank exists
-      const { data: tanks } = await supabase
-        .from("tanks")
-        .select("id,name")
-        .eq("user_id", user.id)
-        .limit(1);
-      let tk: Tank | null = (tanks && tanks[0]) ? (tanks[0] as Tank) : null;
+      // find-or-create default tank
+      const { data: tanks } = await supabase.from("tanks").select("id").eq("user_id", user.id).limit(1);
+      let tk: Tank | undefined = tanks?.[0];
       if (!tk) {
         const { data: created } = await supabase
-          .from("tanks")
-          .insert({ user_id: user.id, name: "My Tank", volume_value: 200, volume_unit: "L" })
-          .select()
-          .single();
-        tk = (created || null) as Tank | null;
+        .from("tanks")
+        .insert({ user_id: user.id, name: "My Tank", volume_value: 200, volume_unit: "L" })
+        .select()
+        .single();
+        tk = created as Tank | undefined;
       }
-      if (!live || !tk) { setLoading(false); return; }
+      if (!tk) return;
       setTank(tk);
 
-      // Load parameter map
-      const { data: params } = await supabase.from("parameters").select("id,key");
-      const idByKey: Record<string, number> = {};
-      (params || []).forEach((p:any) => { idByKey[p.key] = p.id; });
+      // load parameters
+      const { data: p } = await supabase.from("parameters").select("id, key, display_name");
+      const typed = (p || []).filter(Boolean) as Param[];
+      setParams(typed);
 
-      // Load targets
-      const { data: tgs } = await supabase
-        .from("targets")
-        .select("parameter_id,target_value")
-        .eq("tank_id", tk.id);
-      const nextTargets = { ...targets };
-      (tgs || []).forEach((t:any) => {
-        const k = keys.find(k => idByKey[k] === t.parameter_id);
-        if (k) nextTargets[k] = t.target_value != null ? Number(t.target_value) : null;
-      });
-      if (!live) return;
-      setTargets(nextTargets);
-
-      // Load preferred products
+      // load existing preferred products for this tank
       const { data: prefs } = await supabase
-        .from("preferred_products")
-        .select("parameter_key,product_id")
-        .eq("tank_id", tk.id);
-      const mapPref: Record<ParamKey, string|undefined> = { alk: undefined, ca: undefined, mg: undefined, po4: undefined, no3: undefined };
-      (prefs || []).forEach((r:any) => {
-        if (keys.includes(r.parameter_key)) mapPref[r.parameter_key as ParamKey] = r.product_id;
-      });
-      setPreferred(mapPref);
+      .from("preferred_products")
+      .select("parameter_id, product_id")
+      .eq("user_id", user.id)
+      .eq("tank_id", tk.id);
 
-      setLoading(false);
+      // map param_id -> key, then fill selected
+      const idToKey: Record<number, string> = {};
+      typed.forEach(pr => { idToKey[pr.id] = pr.key; });
+      const sel: Record<string, string> = {};
+      (prefs || []).forEach((r: any) => {
+        const key = idToKey[r.parameter_id];
+        if (key) sel[key] = r.product_id;
+      });
+        setSelected(sel);
     })();
-    return () => { live = false; };
   }, []);
 
-  async function saveTarget(key: ParamKey, value: number|null) {
-    if (!tank) return;
-    // get parameter id for this key
-    const { data: params } = await supabase.from("parameters").select("id,key");
-    const p = (params || []).find((x:any) => x.key === key);
-    if (!p) return;
-    await supabase.from("targets").upsert({
+  async function savePreferred(paramId: number, productId?: string) {
+    if (!userId || !tank || !productId) return;
+    await supabase
+    .from("preferred_products")
+    .upsert({
+      user_id: userId,
       tank_id: tank.id,
-      parameter_id: p.id,
-      target_value: value
-    }).select();
+      parameter_id: paramId,
+      product_id: productId,
+    }, { onConflict: "user_id,tank_id,parameter_id" })
+    .select();
   }
 
-  async function savePreferred(key: ParamKey, productId: string|undefined) {
-    if (!tank || !productId) return;
-    await supabase.from("preferred_products").upsert({
-      tank_id: tank.id,
-      parameter_key: key,
-      product_id: productId
-    }).select();
-  }
+  if (!userId) return <main className="card">Sign in to manage your Chemist settings.</main>;
+  if (!tank) return <main className="card">Preparing your tank…</main>;
 
   return (
     <main className="space-y-6">
-      <section>
-        <h1 className="text-2xl font-semibold">Chemist</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Set your preferred product for each parameter and adjust your target values.
-        </p>
-      </section>
+    <section className="card">
+    <h2 className="text-lg font-semibold">Chemist</h2>
+    <p className="text-sm text-gray-600">
+    Choose the product you use for each parameter. The Calculator will use these selections and each product’s potency.
+    </p>
+    </section>
 
-      {loading ? (
-        <div className="p-4 rounded-xl border">Loading...</div>
-      ) : !tank ? (
-        <div className="p-4 rounded-xl border">Sign in to manage Chemist settings.</div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4">
-          {keys.map((k) => (
-            <div key={k} className="p-4 border rounded-2xl space-y-3">
-              <h3 className="font-medium">{labels[k]}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-sm mb-1">Target</label>
-                  <input
-                    className={inputClass}
-                    type="number"
-                    step={k === "po4" ? "0.001" : "0.1"}
-                    value={targets[k] ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value === "" ? null : Number(e.target.value);
-                      setTargets((s) => ({ ...s, [k]: v }));
-                      saveTarget(k, v);
-                    }}
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm mb-1">Product</label>
-                  <ProductPicker
-                    parameterKey={k}
-                    value={preferred[k]}
-                    onChange={(pid) => {
-                      setPreferred((s) => ({ ...s, [k]: pid }));
-                      if (pid) savePreferred(k, pid);
-                    }}
-                  />
-                  {/** Helper text for Tropic Marin Balling A/B */}
-                  <TMHelper parameterKey={k} productId={preferred[k]} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="grid grid-cols-1 gap-4">
+    {params.map(p => (
+      <div key={p.id} className="card space-y-2">
+      <div className="font-medium">{p.display_name}</div>
+      <ProductPicker
+      parameterId={p.id}
+      value={selected[p.key]}
+      onChange={(productId) => {
+        setSelected(s => ({ ...s, [p.key]: productId }));
+        savePreferred(p.id, productId);
+      }}
+      />
+      </div>
+    ))}
+    </div>
     </main>
   );
-}
-
-function TMHelper({ parameterKey, productId }:{
-  parameterKey: ParamKey;
-  productId?: string;
-}) {
-  const [text, setText] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      if (!productId) { if (live) setText(null); return; }
-      const { data } = await supabase
-        .from("products")
-        .select("brand,name")
-        .eq("id", productId)
-        .limit(1)
-        .single();
-      if (!live) return;
-      const brand = (data?.brand || "").toLowerCase();
-      const name = (data?.name || "").toLowerCase();
-
-      if (brand.includes("tropic marin") && /balling\s*b/.test(name) && parameterKey === "alk") {
-        setText("Guide: 30 ml raises Alkalinity by approx 2.2 dKH in 35 L.");
-        return;
-      }
-      if (brand.includes("tropic marin") && /balling\s*a/.test(name) && parameterKey === "ca") {
-        setText("Guide: 30 ml raises Calcium by approx 15 ppm in 35 L.");
-        return;
-      }
-      setText(null);
-    })();
-    return () => { live = false; };
-  }, [productId, parameterKey]);
-
-  if (!text) return null;
-  return <p className="text-xs text-gray-600 mt-2">{text}</p>;
 }
