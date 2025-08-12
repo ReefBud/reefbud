@@ -14,6 +14,14 @@ const PARAMS = [
     { key: 'salinity', label: 'Salinity (ppt)',   example: '30–40' },
 ] as const;
 
+type InsertedRow = {
+    id: string;
+    measured_at: string;
+    value: number;
+    parameter_key?: string | null;
+    parameter?: string | null;
+};
+
 export default function ResultForm({
     defaultParam = 'alk',
     tankId,
@@ -21,7 +29,7 @@ export default function ResultForm({
 }: {
     defaultParam?: ParamKey;
     tankId: string;
-    onSaved?: () => void;
+    onSaved?: (r: InsertedRow) => void;
 }) {
     const [param, setParam] = useState<ParamKey>(defaultParam);
     const [value, setValue] = useState('');
@@ -49,7 +57,7 @@ export default function ResultForm({
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Please sign in');
 
-            // 1) Look up parameter_id from global parameters table by key (no tank_id filter)
+            // 1) Resolve parameter_id by key (your parameters table has no tank_id column)
             const { data: paramRows, error: paramErr } = await supabase
             .from('parameters')
             .select('id')
@@ -57,13 +65,13 @@ export default function ResultForm({
             .limit(1);
 
             if (paramErr) throw paramErr;
-            if (!paramRows || paramRows.length === 0) {
-                throw new Error(`Parameter definition not found for key "${param}". Please ensure a row exists in "parameters" (key='${param}').`);
+            if (!paramRows?.length) {
+                throw new Error(`Parameter definition not found for key "${param}". Please add it in "parameters".`);
             }
 
             const parameterId = paramRows[0].id;
 
-            // 2) Insert the result with parameter_id
+            // 2) Insert result and return the inserted row (so we can show it instantly)
             const row = {
                 user_id: user.id,
                 tank_id: tankId,
@@ -73,11 +81,25 @@ export default function ResultForm({
                 parameter_key: param,
             };
 
-            const { error } = await supabase.from('results').insert(row);
+            const { data: inserted, error } = await supabase
+            .from('results')
+            .insert(row)
+            .select('id, measured_at, value, parameter_key, parameter')
+            .single();
+
             if (error) throw error;
 
+            // Clear input and optimistically update parent
             setValue('');
-            onSaved?.();
+            if (inserted) {
+                onSaved?.({
+                    id: String(inserted.id),
+                          measured_at: inserted.measured_at,
+                          value: Number(inserted.value ?? 0),
+                          parameter_key: inserted.parameter_key ?? inserted.parameter ?? null,
+                          parameter: inserted.parameter ?? null,
+                });
+            }
         } catch (e: any) {
             setError(e?.message || 'Could not save reading');
         } finally {
