@@ -1,70 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import ProductCreateForm from "@/components/ProductCreateForm";
+import ProductForm from "@/components/ProductForm";
 
 type Row = {
   id: string;
   brand: string;
   name: string;
-  parameter_id: number;
-  parameter_key?: string | null;
+  parameter_id: number | null;
+  grams_per_liter: number | null;
+  dose_ref_ml: number | null;
+  delta_ref_value: number | null;
+  volume_ref_liters: number | null;
+  user_id?: string | null;
   helper_text?: string | null;
-  dose_ref_ml?: number | null;
-  delta_ref_value?: number | null;
-  volume_ref_liters?: number | null;
 };
 
+type Param = { id: number; key: string; display_name: string; unit: string };
+
 export default function ProductsPage() {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [params, setParams] = useState<Record<number, string>>({});
+  const [userId, setUserId] = useState<string | undefined>();
+  const [items, setItems] = useState<Row[]>([]);
+  const [params, setParams] = useState<Param[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
-    const [{ data: ps }, { data: me }] = await Promise.all([
-      supabase.from("parameters").select("id,display_name"),
-      supabase.auth.getUser()
-    ]);
+  async function reload() {
+    const { data: { user } } = await supabase.auth.getUser();
+    const uid = user?.id;
 
-    const map: Record<number, string> = {};
-    (ps || []).forEach((p: any) => { map[p.id] = p.display_name; });
-    setParams(map);
+    const p = await supabase.from("parameters").select("id, key, display_name, unit");
+    if (!p.error && p.data) setParams(p.data as any);
 
-    const uid = me?.user?.id;
-    const orClause = uid ? `user_id.is.null,user_id.eq.${uid}` : `user_id.is.null`;
-
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("products")
-      .select("id,brand,name,parameter_id,parameter_key,helper_text,dose_ref_ml,delta_ref_value,volume_ref_liters,user_id")
-      .or(orClause);
-
-    setRows((data || []).sort((a: any, b: any) => `${a.brand} ${a.name}`.localeCompare(`${b.brand} ${b.name}`)));
+      .select("id, brand, name, parameter_id, grams_per_liter, dose_ref_ml, delta_ref_value, volume_ref_liters, helper_text, user_id");
+    if (error) throw error;
+    const filtered = (data || []).filter((r: any) => r.user_id === null || r.user_id === uid);
+    filtered.sort((a,b)=> `${a.brand} ${a.name}`.localeCompare(`${b.brand} ${b.name}`));
+    setItems(filtered as Row[]);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        setUserId(user?.id);
+        await reload();
+      } catch (e:any) {
+        console.error("load products error", e);
+        setErr(e?.message || "Failed loading products");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const paramMap = useMemo(() => {
+    const m = new Map<number, Param>();
+    params.forEach(p => m.set(p.id, p));
+    return m;
+  }, [params]);
 
   return (
     <main className="space-y-6">
-      <h2 className="text-xl font-semibold">Products</h2>
-      <ProductCreateForm onCreated={load} />
+      <section className="card">
+        <h2 className="text-lg font-semibold">Products</h2>
+        <p className="text-sm text-gray-600">
+          Add your dosing products. This list combines your products and the global catalog.
+        </p>
+      </section>
+
+      <ProductForm onSaved={() => reload()} />
 
       <section className="card">
-        <h3 className="text-base font-semibold mb-2">Your products and global</h3>
-        <div className="divide-y">
-          {rows.map(r => (
-            <div key={r.id} className="py-2">
-              <div className="font-medium">{r.brand} — {r.name}</div>
-              <div className="text-sm text-gray-600">
-                Parameter: {params[r.parameter_id] || r.parameter_key || r.parameter_id}
-                {r.dose_ref_ml && r.delta_ref_value && r.volume_ref_liters ? (
-                  <> • Potency: {r.dose_ref_ml} ml → +{r.delta_ref_value} in {r.volume_ref_liters} L</>
-                ) : null}
-              </div>
-              {r.helper_text ? <div className="text-xs mt-1 italic">{r.helper_text}</div> : null}
-            </div>
-          ))}
-          {rows.length === 0 && <div className="text-sm text-gray-500">No products yet.</div>}
-        </div>
+        <h3 className="text-base font-semibold">All visible products</h3>
+        {loading ? (
+          <div>Loading…</div>
+        ) : err ? (
+          <div className="text-red-600">{err}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-gray-600">
+                <tr>
+                  <th className="py-2 pr-4">Brand</th>
+                  <th className="py-2 pr-4">Name</th>
+                  <th className="py-2 pr-4">Parameter</th>
+                  <th className="py-2 pr-4">g/L</th>
+                  <th className="py-2 pr-4">Potency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => {
+                  const p = it.parameter_id ? paramMap.get(it.parameter_id) : undefined;
+                  const unit = p?.unit || "units";
+                  const potency = (it.dose_ref_ml && it.delta_ref_value && it.volume_ref_liters)
+                    ? `${it.dose_ref_ml} ml → +${it.delta_ref_value} ${unit} in ${it.volume_ref_liters} L`
+                    : "—";
+                  return (
+                    <tr key={it.id} className="border-t border-gray-100">
+                      <td className="py-2 pr-4">{it.brand}</td>
+                      <td className="py-2 pr-4">{it.name}</td>
+                      <td className="py-2 pr-4">{p?.display_name || "—"}</td>
+                      <td className="py-2 pr-4">{it.grams_per_liter ?? "—"}</td>
+                      <td className="py-2 pr-4">{potency}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </main>
   );
