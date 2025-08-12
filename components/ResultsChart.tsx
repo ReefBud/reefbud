@@ -1,47 +1,94 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import React from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
-/**
- * Fix for Next.js + Recharts dynamic imports:
- * Map each named export to a pseudo default export so the loader shape matches.
- */
-const LineChart = dynamic(() => import("recharts").then(m => ({ default: m.LineChart })), { ssr: false });
-const Line = dynamic(() => import("recharts").then(m => ({ default: m.Line })), { ssr: false });
-const XAxis = dynamic(() => import("recharts").then(m => ({ default: m.XAxis })), { ssr: false });
-const YAxis = dynamic(() => import("recharts").then(m => ({ default: m.YAxis })), { ssr: false });
-const CartesianGrid = dynamic(() => import("recharts").then(m => ({ default: m.CartesianGrid })), { ssr: false });
-const Tooltip = dynamic(() => import("recharts").then(m => ({ default: m.Tooltip })), { ssr: false });
-const ResponsiveContainer = dynamic(() => import("recharts").then(m => ({ default: m.ResponsiveContainer })), { ssr: false });
-
-type Point = {
-  measured_at: string | Date;
-  value: number;
+type Point = { measured_at: string | Date; value: number };
+type Props = {
+  data: Point[];
+  unit?: string;          // e.g. "dKH", "ppm"
+  label?: string;         // e.g. "Alkalinity"
+  height?: number;        // chart height px
 };
 
-export default function ResultsChart({ data, unit }: { data: Point[]; unit?: string }) {
-  // Normalize dates to ISO strings for Recharts
-  const rows = (data || []).map(d => ({
-    ...d,
-    measured_at: typeof d.measured_at === "string" ? d.measured_at : (d.measured_at as Date).toISOString(),
-  }));
+export default function ResultsChart({
+  data,
+  unit = "",
+  label = "Result",
+  height = 320,
+}: Props) {
+  const safe = Array.isArray(data)
+  ? data
+  .filter((d) => d && d.measured_at != null && d.value != null)
+  .map((d) => ({
+    measured_at:
+    typeof d.measured_at === "string"
+    ? d.measured_at
+    : (d.measured_at as Date).toISOString(),
+               value: Number(d.value),
+  }))
+  .sort((a, b) => a.measured_at.localeCompare(b.measured_at))
+  : [];
 
-  if (!rows.length) {
-    return <div className="text-sm text-gray-600">No data yet for this parameter.</div>;
+  if (safe.length === 0) {
+    return (
+      <div className="text-sm text-gray-600">
+      No data yet. Add a result above to see the trend here.
+      </div>
+    );
   }
 
   return (
-    <div style={{ width: "100%", height: 360 }}>
-      <ResponsiveContainer>
-        <LineChart data={rows} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="measured_at" tick={{ fontSize: 12 }} />
-          <YAxis tick={{ fontSize: 12 }} label={{ value: unit || "", angle: -90, position: "insideLeft" }} />
-          <Tooltip />
-          <Line type="monotone" dataKey="value" dot={false} strokeWidth={2} />
-        </LineChart>
-      </ResponsiveContainer>
+    <div style={{ width: "100%", height }}>
+    <ResponsiveContainer>
+    <LineChart data={safe} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+    <CartesianGrid strokeDasharray="3 3" />
+    <XAxis
+    dataKey="measured_at"
+    tick={{ fontSize: 12 }}
+    minTickGap={24}
+    />
+    <YAxis
+    tick={{ fontSize: 12 }}
+    width={48}
+    domain={["auto", "auto"]}
+    label={{
+      value: unit || "",
+      angle: -90,
+      position: "insideLeft",
+      offset: 10,
+      style: { textAnchor: "middle", fontSize: 12 },
+    }}
+    />
+    <Tooltip
+    formatter={(v: any) => [`${v}${unit ? ` ${unit}` : ""}`, label]}
+    labelFormatter={(ts: any) =>
+      new Date(ts).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    }
+    />
+    <Line
+    type="monotone"
+    dataKey="value"
+    dot={false}
+    strokeWidth={2}
+    isAnimationActive={false}
+    />
+    </LineChart>
+    </ResponsiveContainer>
     </div>
   );
 }
