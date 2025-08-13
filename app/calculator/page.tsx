@@ -6,7 +6,7 @@ import { computeDoseMl } from '@/lib/dose';
 
 type Parameter = { id: number; key: string; unit: string; display_name?: string | null };
 type Tank = { id: string; name?: string | null; volume_liters?: number | null };
-type Targets = { [key: string]: number | null }; // targets by parameter key
+type Targets = { [key: string]: number | null };
 type Reading = { parameter_id: number; value: number; measured_at: string };
 type Preferred = { parameter_id: number; product_id: string, product: Product };
 type Product = {
@@ -20,7 +20,8 @@ type Product = {
   volume_ref_liters?: number | null;
 };
 
-const PARAM_KEYS = ['alk', 'ca', 'mg', 'po4', 'no3', 'trace_anions', 'trace_cations'] as const;
+// Restrict to the five parameters requested
+const PARAM_KEYS = ['alk', 'ca', 'mg', 'po4', 'no3'] as const;
 type ParamKey = typeof PARAM_KEYS[number];
 
 export default function CalculatorPage() {
@@ -51,7 +52,7 @@ export default function CalculatorPage() {
       const uid = userData.user.id;
       setUserId(uid);
 
-      // 1) Parameters
+      // 1) Parameters (pull IDs & units for the five keys)
       const { data: pData } = await supabase
         .from('parameters')
         .select('id, key, unit, display_name')
@@ -60,7 +61,7 @@ export default function CalculatorPage() {
       const params: Parameter[] = pData ?? [];
       if (mounted) setParameters(params);
 
-      // 2) Find or create a default tank for the user
+      // 2) Pick a tank (first one) just to get the volume; UI is per-user
       let t: Tank | null = null;
       {
         const { data: t1 } = await supabase
@@ -73,46 +74,37 @@ export default function CalculatorPage() {
         if (t1) t = t1 as Tank;
       }
       if (t == null) {
-        // optional: create a default tank if none exists
-        const { data: created, error: ctErr } = await supabase
+        // Optional: create a default tank to avoid null volume
+        const { data: created } = await supabase
           .from('tanks')
           .insert({ user_id: uid, name: 'My Tank', volume_liters: 200 })
           .select('id, name, volume_liters')
           .single();
-        if (!ctErr && created) t = created as Tank;
+        if (created) t = created as Tank;
       }
       if (mounted) setTank(t);
 
-      // 3) Targets (try per-tank table first, else user-level 'targets')
-      if (t?.id) {
-        const { data: tt } = await supabase
-          .from('tank_targets')
-          .select('parameter_id, target_value, parameters!inner(key)')
-          .eq('tank_id', t.id);
-        if (tt && tt.length) {
-          const map: Targets = {};
-          for (const row of tt as any[]) {
-            map[row.parameters.key] = row.target_value;
-          }
-          if (mounted) setTargets(map);
-        } else {
-          const { data: tg } = await supabase
-            .from('targets')
-            .select('alk, ca, mg, po4, no3, salinity');
-          if (tg && tg.length) {
-            const first = tg[0] as any;
-            if (mounted) setTargets({
-              alk: first.alk ?? null,
-              ca: first.ca ?? null,
-              mg: first.mg ?? null,
-              po4: first.po4 ?? null,
-              no3: first.no3 ?? null,
-            });
-          }
+      // 3) Targets — **from Dashboard only** (user-level 'targets' table)
+      //    We ignore any tank-specific targets here by request.
+      {
+        const { data: tg } = await supabase
+          .from('targets')
+          .select('alk, ca, mg, po4, no3')
+          .eq('user_id', uid)
+          .maybeSingle();
+
+        if (mounted) {
+          setTargets({
+            alk: tg?.alk ?? null,
+            ca:  tg?.ca  ?? null,
+            mg:  tg?.mg  ?? null,
+            po4: tg?.po4 ?? null,
+            no3: tg?.no3 ?? null,
+          });
         }
       }
 
-      // 4) Preferred products per parameter for this tank
+      // 4) Preferred products per parameter (Chemist selection)
       if (t?.id) {
         const { data: pref } = await supabase
           .from('preferred_products')
@@ -133,7 +125,7 @@ export default function CalculatorPage() {
         if (mounted) setPreferred(map);
       }
 
-      // 5) Latest readings (optional — if you have a readings table)
+      // 5) Latest readings (optional; shows current values)
       if (t?.id) {
         const { data: r } = await supabase
           .from('readings')
@@ -161,7 +153,7 @@ export default function CalculatorPage() {
 
     let mlNeeded: number | null = null;
     let deltaText = '';
-    let warnings: string[] = [];
+    let info: string[] = [];
 
     if (latestReading != null && target != null && product && Vtank != null) {
       const delta = target - latestReading;
@@ -173,14 +165,18 @@ export default function CalculatorPage() {
           volume_ref_liters: product.volume_ref_liters!,
         });
       } else {
-        warnings.push('Missing potency on selected product (dose_ref_ml, delta_ref_value, volume_ref_liters).');
+        info.push('Missing potency on selected product (dose, change, ref volume).');
       }
     } else {
-      if (latestReading == null) warnings.push('No recent reading found.');
-      if (target == null) warnings.push('No target set (Dashboard).');
-      if (!product) warnings.push('No product selected (Chemist).');
-      if (Vtank == null) warnings.push('Tank volume unknown.');
+      if (latestReading == null) info.push('No recent reading.');
+      if (target == null) info.push('No target set on Dashboard.');
+      if (!product) info.push('No product selected in Chemist.');
+      if (Vtank == null) info.push('Tank volume unknown.');
     }
+
+    const currentToTarget = (latestReading != null && target != null)
+      ? `${latestReading} → ${target}`
+      : (latestReading != null ? String(latestReading) : '—');
 
     return (
       <tr key={param.id} className="border-t">
@@ -188,8 +184,7 @@ export default function CalculatorPage() {
           <div className="font-medium">{param.display_name ?? param.key}</div>
           <div className="text-xs text-gray-500">{param.unit}</div>
         </td>
-        <td className="py-3 pr-3 align-top">{latestReading ?? '—'}</td>
-        <td className="py-3 pr-3 align-top">{target ?? '—'}</td>
+        <td className="py-3 pr-3 align-top">{currentToTarget}</td>
         <td className="py-3 pr-3 align-top">
           {product ? (
             <div className="text-sm">
@@ -208,7 +203,7 @@ export default function CalculatorPage() {
               <div className="text-xs text-gray-500">Δ = {deltaText} {param.unit}</div>
             </div>
           ) : (
-            <div className="text-xs text-amber-700">{warnings.join(' ') || '—'}</div>
+            <div className="text-xs text-amber-700">{info.join(' ') || '—'}</div>
           )}
         </td>
       </tr>
@@ -236,7 +231,7 @@ export default function CalculatorPage() {
     <main className="max-w-5xl mx-auto p-4">
       <h1 className="text-2xl font-semibold">Calculator</h1>
       <p className="text-sm text-gray-600 mt-1">
-        Uses your selected Chemist product and potency, your latest reading, your target (Dashboard), and your tank volume.
+        Targets are pulled from your Dashboard. Advanced correction fields have been removed.
       </p>
 
       <div className="mt-4 text-sm text-gray-700">
@@ -248,8 +243,7 @@ export default function CalculatorPage() {
           <thead className="bg-gray-50 text-gray-600">
             <tr>
               <th className="text-left font-medium px-3 py-2">Parameter</th>
-              <th className="text-left font-medium px-3 py-2">Latest</th>
-              <th className="text-left font-medium px-3 py-2">Target</th>
+              <th className="text-left font-medium px-3 py-2">Current → Target</th>
               <th className="text-left font-medium px-3 py-2">Product (Chemist)</th>
               <th className="text-left font-medium px-3 py-2">Recommended Dose</th>
             </tr>
@@ -258,11 +252,6 @@ export default function CalculatorPage() {
             {parameters.map(renderRow)}
           </tbody>
         </table>
-      </div>
-
-      <div className="mt-4 text-xs text-gray-500">
-        Tip: If a row shows “No product selected,” go to <a className="underline" href="/chemist">Chemist</a> and pick one.
-        If it shows “Missing potency,” edit the product in <a className="underline" href="/products">Products</a> and add test potency.
       </div>
     </main>
   );
