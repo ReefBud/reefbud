@@ -7,7 +7,7 @@ import type { Product, Parameter, Tank } from '@/lib/types';
 type Props = {
   tank: Tank;
   parameter: Parameter;
-  value: string | null;
+  value: string | null; // selected product_id or null
   onChange: (productId: string | null, product?: Product | null) => void;
 };
 
@@ -21,8 +21,7 @@ export default function ProductSelectInline({ tank, parameter, value, onChange }
     (async () => {
       setLoading(true);
       setErr(null);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setErr('Not signed in'); setLoading(false); return; }
+      // Load global + user products for this parameter
       const { data, error } = await supabase
         .from('products')
         .select('*')
@@ -37,7 +36,10 @@ export default function ProductSelectInline({ tank, parameter, value, onChange }
     return () => { mounted = false; };
   }, [parameter.id]);
 
-  const selected = useMemo(() => products.find(p => p.id === value) || null, [products, value]);
+  const selected = useMemo(
+    () => products.find(p => p.id === value) || null,
+    [products, value]
+  );
 
   return (
     <div className="space-y-1">
@@ -56,10 +58,14 @@ export default function ProductSelectInline({ tank, parameter, value, onChange }
       >
         <option value="">-- Select a product --</option>
         {products.map(p => (
-          <option key={p.id} value={p.id}>{p.brand} — {p.name}</option>
+          <option key={p.id} value={p.id}>
+            {p.brand} — {p.name}
+          </option>
         ))}
       </select>
-      {selected?.helper_text && <p className="text-xs text-gray-600">{selected.helper_text}</p>}
+      {selected?.helper_text && (
+        <p className="text-xs text-gray-600">{selected.helper_text}</p>
+      )}
       {err && <p className="text-xs text-red-600">{err}</p>}
     </div>
   );
