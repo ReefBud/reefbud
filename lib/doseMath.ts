@@ -17,18 +17,12 @@ export function potencyPerMlPerL(opts: {
   return delta_ref_value / (dose_ref_ml * volume_ref_liters);
 }
 
-/**
- * ml required for a desired delta in a tank.
- */
 export function doseMlForDelta(deltaUnits: number, unitsPerMlPerL: number, tankLiters: number): number {
   if (!isFinite(deltaUnits) || !isFinite(unitsPerMlPerL) || !isFinite(tankLiters)) return 0;
   if (unitsPerMlPerL <= 0 || tankLiters <= 0) return 0;
   return deltaUnits / (unitsPerMlPerL * tankLiters);
 }
 
-/**
- * Linear regression slope (units/day).
- */
 export function slopePerDay(readings: { value: number; measured_at: string }[]): { slopePerDay: number, n: number } {
   if (!readings || readings.length < 2) return { slopePerDay: 0, n: readings ? readings.length : 0 };
   const rows = readings
@@ -48,16 +42,22 @@ export function slopePerDay(readings: { value: number; measured_at: string }[]):
   return { slopePerDay: slope, n };
 }
 
-/** Near-target thresholds (conservative). */
 export const nearThreshold = {
-  alk: 0.2,   // dKH
-  ca: 10,     // ppm
-  mg: 20,     // ppm
+  alk: 0.2,
+  ca: 10,
+  mg: 20,
 };
 
-/** Max safe single-day spikes for correction (guideline). */
 export const maxSpike = {
-  alk: 1.0,   // dKH
-  ca: 20,     // ppm
-  mg: 50,     // ppm
+  alk: 1.0,
+  ca: 20,
+  mg: 50,
 };
+
+/** Suggest number of days to split a correction to respect max spike. */
+export function splitDaysNeeded(deltaUnits: number, paramKey: 'alk' | 'ca' | 'mg'): number {
+  const max = maxSpike[paramKey];
+  if (!isFinite(deltaUnits) || deltaUnits <= 0) return 1;
+  if (deltaUnits <= max) return 1;
+  return Math.ceil(deltaUnits / max);
+}

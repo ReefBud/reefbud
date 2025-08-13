@@ -1,33 +1,28 @@
-# ReefBud Calculator Fix — 2025-08-13e
+# ReefBud Calculator Update — 2025-08-14a
 
-**What’s fixed**
+What changed
 
-- Per-parameter **Refresh** button now truly refetches Results and recomputes without changing the dropdown.
-- **Your current daily dose** recalculates immediately on input (no more dropdown toggle needed).
-- Shows **Extra ml/day needed** only, plus **Correction now**, with warnings for safe daily spikes:
-  - Alk ≈ 1.0 dKH/day
-  - Ca ≈ 20 ppm/day
-  - Mg ≈ 50 ppm/day
-- **Working** steps are shown so users can validate the math.
-- Chemist is hard-removed (route returns 404).
+- Shows **Maintain dose: X ml/day** as the final daily dosing required to hold steady.
+- Shows **Add extra** or **Reduce by** relative to your current daily dose.
+- Keeps **Correction now** for a one-time bump to reach target, with safe-spike guidance.
+- Per-parameter **Refresh** re-fetches Results and recomputes.
+- Dose input recalculates immediately.
+- Working steps are shown for peace of mind.
 
-**How it computes**
+Safe correction guidance
 
-1) Potency (units/ml/L) = delta_ref_value / (dose_ref_ml × volume_ref_liters)  
-2) Per-ml in your tank = potency × tank_L  
-3) Observed slope (Results) = units/day  
-4) Dose effect from your current dose = currentDailyMl × per-ml-in-tank  
-5) Estimated consumption = max(0, doseEffect − slope)  
-6) Required ml/day = consumption / per-ml-in-tank  
-7) Extra ml/day needed = max(0, required − currentDailyMl)  
-8) Correction now (if below target) = delta / per-ml-in-tank, with safe-spike warnings
+- Alk: about 1.0 dKH per day
+- Ca: about 20 ppm per day
+- Mg: about 50 ppm per day
 
-**Install**
+If the correction exceeds these, the UI suggests the number of days to split it evenly.
 
-Drop files into your repo at the same paths, then:
+Install
+
+Drop the files into your repo, then:
 
 ```
-git add -A && git commit -m "calc: real refresh, immediate recompute on dose input, extra ml/day only, working steps, safe spikes; remove chemist 404" && git push
+git add -A && git commit -m "calc: show maintain dose + extra or reduce, correction with safe split, real refresh and instant recompute" && git push
 ```
 
-Open `/calculator` and test each card.
+Open `/calculator` and test each parameter card.
