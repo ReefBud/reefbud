@@ -12,7 +12,6 @@ export default function RootLayout({ children }:{children:React.ReactNode}) {
         <Link href="/" className="text-2xl font-semibold">ReefBud</Link>
         <nav className="text-sm text-gray-600 space-x-4">
           <Link href="/dashboard">Dashboard</Link>
-          <Link href="/chemist">Chemist</Link>
           <Link href="/products">Products</Link>
           <Link href="/results">Results</Link>
           <Link href="/calculator">Calculator</Link>
