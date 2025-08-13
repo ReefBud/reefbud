@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import type { Parameter, Tank, TargetRow, Product, Reading } from '@/lib/types';
 import ProductSelectInline from '@/app/components/ProductSelectInline';
@@ -12,11 +12,11 @@ type ParamBundle = {
   param: Parameter;
   productId: string | null;
   latest: number | null;
-  dailySlope: number; // units/day; >0 rising
-  currentDailyMl: number; // user's current daily dose
-  maintainMlPerDay: number | null; // the dose to hold steady
-  extraMlPerDay: number | null; // how much to add to reach maintain dose
-  correctionMl: number | null; // correction now if below target
+  dailySlope: number;
+  currentDailyMl: number;
+  maintainMlPerDay: number | null;
+  extraMlPerDay: number | null;
+  correctionMl: number | null;
   working: string[];
   warnings: string[];
 };
@@ -36,7 +36,6 @@ export default function CalculatorPage() {
   const tankLiters = tank?.volume_liters ?? tank?.volume_value ?? 0;
   const localDoseKey = (pid: number, pkey: string) => userId && tank ? `dose:${userId}:${tank.id}:${pkey}` : '';
 
-  // Initial load
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -47,15 +46,14 @@ export default function CalculatorPage() {
       if (!user) { setErr('Not signed in'); setLoading(false); return; }
       setUserId(user.id);
 
-      // Tank
+      // Tank from DB (Dashboard)
       let { data: tanks, error: terr } = await supabase
         .from('tanks').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(1);
       if (terr) { setErr(terr.message); setLoading(false); return; }
       let t: Tank | null = (tanks && tanks[0]) || null;
       if (!t) {
         const { data: created, error: cerr } = await supabase
-          .from('tanks')
-          .insert({ user_id: user.id, name: 'My Tank', volume_value: 200, volume_unit: 'L', volume_liters: 200 })
+          .from('tanks').insert({ user_id: user.id, name: 'My Tank', volume_value: 200, volume_unit: 'L', volume_liters: 200 })
           .select('*').single();
         if (cerr) { setErr(cerr.message); setLoading(false); return; }
         t = created as unknown as Tank;
@@ -63,23 +61,23 @@ export default function CalculatorPage() {
       if (!mounted) return;
       setTank(t);
 
-      // Parameters
+      // Parameters (Alk/Ca/Mg only)
       const { data: plist, error: perr } = await supabase.from('parameters').select('*').in('key', PARAM_KEYS);
       if (perr) { setErr(perr.message); setLoading(false); return; }
       setParams(plist || []);
 
-      // Targets
+      // Targets from Dashboard
       const { data: tgt } = await supabase.from('targets').select('*').eq('user_id', user.id).maybeSingle();
       setTargets(tgt as TargetRow | null);
 
-      // Preferred products
+      // Preferred products (what the user is using)
       const { data: prefs } = await supabase
         .from('preferred_products').select('parameter_id,product_id')
         .eq('user_id', user.id).eq('tank_id', t!.id);
       const prefIdByParam = new Map<number, string>();
       (prefs || []).forEach((pp: any) => prefIdByParam.set(pp.parameter_id, pp.product_id));
 
-      // Products list
+      // Products list for these params
       const paramIds = (plist || []).map(p => p.id);
       const { data: prods, error: perror } = await supabase
         .from('products').select('*')
@@ -90,7 +88,7 @@ export default function CalculatorPage() {
       (prods || []).forEach((p: any) => { pMap[p.id] = p as Product; });
       setProductsById(pMap);
 
-      // Recent Results
+      // Results history (previous parameters)
       const { data: results } = await supabase
         .from('results').select('*')
         .eq('tank_id', t!.id)
@@ -103,7 +101,7 @@ export default function CalculatorPage() {
         byParam[r.parameter_id].push(r as Reading);
       });
 
-      // Build bundles
+      // Build initial bundles
       const initial: Record<number, ParamBundle> = {};
       for (const p of plist || []) {
         const arr = byParam[p.id] || [];
@@ -125,7 +123,7 @@ export default function CalculatorPage() {
         };
       }
       if (!mounted) return;
-      setBundles(initial);
+      setBundles(recomputeAll(initial, t, tgt as TargetRow | null, pMap));
 
       setLoading(false);
     })();
@@ -138,110 +136,87 @@ export default function CalculatorPage() {
     return productsById[productId] || null;
   };
 
-  const computeForParam = (pb: ParamBundle): ParamBundle => {
-    if (!tank) return pb;
-    const pkey = pb.param.key as ParamKey;
-    const warnings: string[] = [];
-    const working: string[] = [];
-    const targetValue = targets ? (targets as any)[pkey] as number | null : null;
+  const recomputeAll = (
+    state: Record<number, ParamBundle>,
+    tankArg?: Tank | null,
+    targetsArg?: TargetRow | null,
+    productsArg?: Record<string, Product>
+  ) => {
+    const t = tankArg ?? tank;
+    const tgt = targetsArg ?? targets;
+    const pmap = productsArg ?? productsById;
+    const tl = t?.volume_liters ?? t?.volume_value ?? 0;
 
-    const prod = getProduct(pb.productId);
-    const potency = prod ? potencyPerMlPerL({
-      dose_ref_ml: prod.dose_ref_ml,
-      delta_ref_value: prod.delta_ref_value,
-      volume_ref_liters: prod.volume_ref_liters,
-    }) : null;
-
-    if (!potency || !isFinite(potency)) {
-      warnings.push('Product potency missing. Set test dose, change, and tank size on the product.');
-      return { ...pb, maintainMlPerDay: null, extraMlPerDay: null, correctionMl: null, working, warnings };
-    }
-
-    const perMlTank = potency * (tankLiters || 0);
-    if (perMlTank <= 0) {
-      warnings.push('Tank volume or potency is invalid.');
-      return { ...pb, maintainMlPerDay: null, extraMlPerDay: null, correctionMl: null, working, warnings };
-    }
-
-    const slope = pb.dailySlope || 0; // units/day; >0 rising
-    const latest = pb.latest;
-
-    // Effect from current daily dose
-    const doseEffect = pb.currentDailyMl * perMlTank; // units/day
-    // Inferred consumption
-    let consumption = doseEffect - slope; // units/day
-    if (!isFinite(consumption) || consumption < 0) consumption = 0;
-
-    // Maintain dose to keep level steady
-    const maintainMlPerDay = consumption / perMlTank;
-    // Extra to add on top of current
-    const extraMlPerDay = Math.max(0, maintainMlPerDay - pb.currentDailyMl);
-
-    // Correction now if below target
-    let correctionMl: number | null = null;
-    if (latest != null && targetValue != null) {
-      const delta = targetValue - latest; // >0 means below target
-      const absDelta = Math.abs(delta);
-      if (delta > 0) {
-        correctionMl = doseMlForDelta(delta, potency, tankLiters || 0);
-        const thr = nearThreshold[pkey];
-        if (absDelta <= thr) warnings.push('Near target. Maintain and avoid big corrections.');
-        const max = maxSpike[pkey];
-        if (absDelta > max) {
-          const days = splitDaysNeeded(absDelta, pkey);
-          warnings.push(`Safe correction limit for ${pb.param.display_name} is about ${max} ${pb.param.unit} per day. Consider splitting over ${days} days.`);
-        }
-      } else if (delta < 0) {
-        warnings.push('Above target. Reduce or pause dosing. Consider a partial water change.');
-      }
-    }
-
-    // Working display
-    working.push(`Potency (units/ml/L) = delta_ref / (dose_ref_ml × volume_ref_L)`);
-    working.push(`Per-ml effect in tank = potency × tank_L = ${potency.toFixed(6)} × ${tankLiters} = ${perMlTank.toFixed(6)} ${pb.param.unit}/ml`);
-    working.push(`Effect of your current dose = ${pb.currentDailyMl} ml/day × ${perMlTank.toFixed(6)} = ${doseEffect.toFixed(6)} ${pb.param.unit}/day`);
-    working.push(`Observed slope (Results) = ${(slope >= 0 ? '+' : '') + slope.toFixed(6)} ${pb.param.unit}/day`);
-    working.push(`Inferred consumption = doseEffect − slope = ${doseEffect.toFixed(6)} − ${slope.toFixed(6)} = ${consumption.toFixed(6)} ${pb.param.unit}/day`);
-    working.push(`Maintain dose = consumption / per-ml-in-tank = ${consumption.toFixed(6)} / ${perMlTank.toFixed(6)} = ${maintainMlPerDay.toFixed(6)} ml/day`);
-    working.push(`Extra to add = max(0, maintain − current) = max(0, ${maintainMlPerDay.toFixed(6)} − ${pb.currentDailyMl}) = ${extraMlPerDay.toFixed(6)} ml/day`);
-    if (correctionMl != null) {
-      working.push(`Correction now = delta / per-ml-in-tank`);
-    }
-
-    return { ...pb, maintainMlPerDay, extraMlPerDay, correctionMl, warnings, working };
-  };
-
-  const recomputeAll = (state: Record<number, ParamBundle>) => {
     const next: Record<number, ParamBundle> = {};
-    for (const [pid, pb] of Object.entries(state)) {
-      next[Number(pid)] = computeForParam(pb as ParamBundle);
+    for (const [pidStr, pb0] of Object.entries(state)) {
+      const pid = Number(pidStr);
+      const pb = { ...pb0 };
+      const warnings: string[] = [];
+      const working: string[] = [];
+
+      const prod = pb.productId ? pmap[pb.productId] : null;
+      const potency = prod ? potencyPerMlPerL({
+        dose_ref_ml: prod.dose_ref_ml,
+        delta_ref_value: prod.delta_ref_value,
+        volume_ref_liters: prod.volume_ref_liters,
+      }) : null;
+
+      if (!potency || !isFinite(potency) || (tl || 0) <= 0) {
+        if (!potency) warnings.push('Select a product with potency set in Products.');
+        if ((tl || 0) <= 0) warnings.push('Set a valid tank volume on Dashboard.');
+        next[pid] = { ...pb, maintainMlPerDay: null, extraMlPerDay: null, correctionMl: null, warnings, working };
+        continue;
+      }
+
+      const perMlTank = potency * tl;
+      const slope = pb.dailySlope || 0; // units/day; >0 rising
+      const latest = pb.latest;
+      const pkey = pb.param.key as ParamKey;
+      const targetValue = tgt ? (tgt as any)[pkey] as number | null : null;
+
+      // Maintain dose math (absolute, not "extra"):
+      // maintain = max(0, currentDailyMl - slope / perMlTank)
+      const maintain = Math.max(0, pb.currentDailyMl - (slope / perMlTank));
+      const extra = Math.max(0, maintain - pb.currentDailyMl);
+
+      // Correction now (below target)
+      let correction: number | null = null;
+      if (latest != null && targetValue != null) {
+        const delta = targetValue - latest;
+        const absDelta = Math.abs(delta);
+        if (delta > 0) {
+          correction = doseMlForDelta(delta, potency, tl);
+          const thr = nearThreshold[pkey];
+          if (absDelta <= thr) warnings.push('Near target. Maintain; avoid big corrections.');
+          const max = maxSpike[pkey];
+          if (absDelta > max) {
+            const days = splitDaysNeeded(absDelta, pkey);
+            warnings.push(`Safe correction for ${pb.param.display_name} ≈ ${max} ${pb.param.unit}/day. Consider splitting over ${days} days.`);
+          }
+        } else if (delta < 0) {
+          warnings.push('Above target. Reduce or pause dosing; consider a partial water change.');
+        }
+      }
+
+      // Working
+      working.push(`Potency (units/ml/L) = delta_ref / (dose_ref_ml × volume_ref_L)`);
+      working.push(`Per-ml in tank = potency × tank_L = ${potency.toFixed(6)} × ${tl} = ${perMlTank.toFixed(6)} ${pb.param.unit}/ml`);
+      working.push(`Observed slope = ${(slope >= 0 ? '+' : '') + slope.toFixed(6)} ${pb.param.unit}/day`);
+      working.push(`Maintain dose = max(0, current − slope/per-ml-tank) = max(0, ${pb.currentDailyMl} − (${slope.toFixed(6)} / ${perMlTank.toFixed(6)})) = ${maintain.toFixed(6)} ml/day`);
+      working.push(`Extra to add = max(0, maintain − current) = ${extra.toFixed(6)} ml/day`);
+
+      next[pid] = { ...pb, maintainMlPerDay: maintain, extraMlPerDay: extra, correctionMl: correction, warnings, working };
     }
     return next;
   };
 
+  // Recompute when tank/targets/products change
   useEffect(() => {
     setBundles(prev => recomputeAll(prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tankLiters, targets, productsById]);
+  }, [tank, targets, productsById]);
 
-  const setBundle = (parameter_id: number, patch: Partial<ParamBundle>) => {
-    setBundles(prev => {
-      const merged = { ...prev[parameter_id], ...patch } as ParamBundle;
-      const next = { ...prev, [parameter_id]: merged };
-      return recomputeAll(next);
-    });
-  };
-
-  const onSelectProduct = async (parameter_id: number, productId: string | null, _product?: Product | null) => {
-    if (!tank || !userId) return;
-    setBundle(parameter_id, { productId });
-    if (productId) {
-      await supabase.from('preferred_products').upsert({
-        user_id: userId, tank_id: tank.id, parameter_id, product_id: productId
-      }, { onConflict: 'user_id,tank_id,parameter_id' });
-    }
-  };
-
+  // Per-parameter refresh of Results
   const refreshParam = async (p: Parameter) => {
     if (!tank) return;
     const { data } = await supabase
@@ -253,7 +228,17 @@ export default function CalculatorPage() {
     const arr = (data as any[] | null) || [];
     const latest = arr.length ? arr[arr.length - 1].value : null;
     const { slopePerDay: slope } = slopePerDay(arr.map(x => ({ value: x.value, measured_at: x.measured_at })));
-    setBundle(p.id, { latest, dailySlope: slope });
+    setBundles(prev => recomputeAll({ ...prev, [p.id]: { ...prev[p.id], latest, dailySlope: slope } }));
+  };
+
+  const onSelectProduct = async (parameter_id: number, productId: string | null) => {
+    if (!tank || !userId) return;
+    setBundles(prev => recomputeAll({ ...prev, [parameter_id]: { ...prev[parameter_id], productId } }));
+    if (productId) {
+      await supabase.from('preferred_products').upsert({
+        user_id: userId, tank_id: tank.id, parameter_id, product_id: productId
+      }, { onConflict: 'user_id,tank_id,parameter_id' });
+    }
   };
 
   if (loading) return <main className="p-4"><h1 className="text-2xl font-semibold">Calculator</h1><p>Loading…</p></main>;
@@ -264,7 +249,7 @@ export default function CalculatorPage() {
     <main className="max-w-5xl mx-auto p-4 space-y-6">
       <h1 className="text-2xl font-semibold">Calculator</h1>
       <p className="text-sm text-gray-600">
-        This computes the daily dose you need to hold each parameter steady and a safe one-time correction if you are below target.
+        Reads your tank size and targets from Dashboard, your product potency from Products, and your recent Results trend to compute the daily dose to hold steady.
       </p>
 
       <section className="rounded-lg border p-4">
@@ -286,10 +271,7 @@ export default function CalculatorPage() {
             <section key={p.id} className="rounded-lg border p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium">{p.display_name}</h3>
-                <button
-                  className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
-                  onClick={() => refreshParam(p)}
-                >
+                <button className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50" onClick={() => refreshParam(p)}>
                   Refresh
                 </button>
               </div>
@@ -317,7 +299,7 @@ export default function CalculatorPage() {
                     const v = Math.max(0, Number(e.target.value.replace(/[^\d.]/g, '')) || 0);
                     const key = localDoseKey(p.id, p.key);
                     if (key) localStorage.setItem(key, String(v));
-                    setBundle(p.id, { currentDailyMl: v });
+                    setBundles(prev => recomputeAll({ ...prev, [p.id]: { ...prev[p.id], currentDailyMl: v } }));
                   }}
                   placeholder="e.g. 20"
                 />

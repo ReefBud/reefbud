@@ -1,28 +1,24 @@
-# ReefBud Calculator Update — 2025-08-14a
+# ReefBud Calculator — dashboard targets + products + results trend (2025-08-14b)
 
-What changed
-
-- Shows **Maintain dose: X ml/day** as the final daily dosing required to hold steady.
-- Shows **Add extra** or **Reduce by** relative to your current daily dose.
-- Keeps **Correction now** for a one-time bump to reach target, with safe-spike guidance.
-- Per-parameter **Refresh** re-fetches Results and recomputes.
-- Dose input recalculates immediately.
-- Working steps are shown for peace of mind.
+What this does
+- Reads **tank size** and **targets** from your Dashboard tables (`tanks`, `targets`).
+- Reads **which product you are using** from `preferred_products`, and its **potency** from `products`.
+- Reads **previous parameters** from `results` to compute the trend (slope).
+- Computes the **Maintain dose** as an absolute daily number:
+  - `maintain = max(0, currentDailyMl − slope / (potency × tank_L))`
+- Shows **Add extra** or **Reduce by** vs your current daily input.
+- Computes **Correction now** to reach target using product potency and warns if it exceeds safe daily spikes.
 
 Safe correction guidance
-
-- Alk: about 1.0 dKH per day
-- Ca: about 20 ppm per day
-- Mg: about 50 ppm per day
-
-If the correction exceeds these, the UI suggests the number of days to split it evenly.
+- Alk ≈ 1.0 dKH/day
+- Ca ≈ 20 ppm/day
+- Mg ≈ 50 ppm/day
 
 Install
-
-Drop the files into your repo, then:
+Drop the files in place, then:
 
 ```
-git add -A && git commit -m "calc: show maintain dose + extra or reduce, correction with safe split, real refresh and instant recompute" && git push
+git add -A && git commit -m "calc: dashboard targets + tank; preferred products + potency; results trend; maintain dose with math shown" && git push
 ```
 
-Open `/calculator` and test each parameter card.
+Open `/calculator`, pick products (if not already saved), type your current daily dose for each parameter, and click Refresh after logging a new Result.
