@@ -1,19 +1,22 @@
-# ReefBud Patch — 2025-08-13c
+# ReefBud Calculator Patch — 2025-08-13 (d)
 
-- Calculator now:
-  - Reads **latest reading and trend from `results`** (last 14 days)
-  - Lets you enter **Your current daily dose (ml/day)** for Alk, Ca, Mg
-  - Shows **Adjustment** = Recommended − Current daily
-  - Salt‑mix preview **removed**
-- Chemist route returns **404** (fully removed)
-- Product pickers live inside Calculator and persist to `preferred_products`
+What changed
+- Added **Refresh** button per parameter (reloads latest Results + trend)
+- When you change **Your current daily dose (ml/day)** it recalculates immediately
+- Removed "Recommended daily dose" and "Adjustment" UI — now it shows **Extra ml/day needed** only
+- Shows **working** (potency, dose effect, consumption estimate, required ml/day, extra ml/day)
+- Uses improved consumption model: `consumption = doseEffectPerDay - observedSlope`, clamped to ≥ 0
+- Keeps **Correction now** (with safe spike guardrails): Alk ≈ 1.0 dKH/day, Ca ≈ 20 ppm/day, Mg ≈ 50 ppm/day
+- Chemist route is hard removed (404)
 
-## Drop-in paths
-- app/calculator/page.tsx
-- app/components/ProductSelectInline.tsx
-- app/chemist/page.tsx
-- lib/doseMath.ts
-- lib/types.ts
+Drop-in files
+- `app/calculator/page.tsx`
+- `app/chemist/page.tsx`
+- `app/components/ProductSelectInline.tsx`
+- `lib/doseMath.ts`
+- `lib/types.ts`
 
-## Commit
-git add -A && git commit -m "calc: latest from Results, add current daily dose + adjustment; remove salt-mix; remove Chemist route" && git push
+One-liner
+```
+git add -A && git commit -m "calculator: refresh per param, extra ml/day, working, safe spikes; remove chemist route" && git push
+```

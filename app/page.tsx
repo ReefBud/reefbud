@@ -16,9 +16,7 @@ export default function Home() {
     <p className="text-sm text-gray-600">Choose a section to get started.</p>
     <div className="grid gap-4 md:grid-cols-3">
     <Tile href="/dashboard" title="Dashboard" desc="Tank volume + target parameters." />
-    <Tile href="/icp" title="ICP" desc="Add/import ICP tests and view results." />
     <Tile href="/calculator" title="Calculator" desc="Dosing suggestions from your targets/readings." />
-    <Tile href="/chemist" title="Chemist" desc="Use Tropic Marin A/B/C and trace elements." />
     <Tile href="/products" title="Products" desc="Add custom products and potencies." />
     <Tile href="/results" title="Results" desc="View parameter trends over time." />
     {!signedIn && <Tile href="/login" title="Sign in" desc="Sign in to save your data." />}
