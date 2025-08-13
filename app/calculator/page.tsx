@@ -2,324 +2,290 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import type { Parameter, Tank, TargetRow, Product, PreferredProduct, Reading } from '@/lib/types';
+import ProductSelectInline from '@/app/components/ProductSelectInline';
+import { potencyPerMlPerL, doseMlForDelta, slopePerDay, waterChangeResult, nearThreshold } from '@/lib/doseMath';
 
-/**
- * Simple 3-line calculator
- * - Parameters: ALK, MG, CA
- * - Target: single-row `targets` table (user_id keyed)
- * - Current: latest `readings` per parameter for the user's main tank
- * - Current Daily Dose: inferred from consumption using last N readings and product potency
- * - New Dose: current daily dose plus gentle correction toward target with guardrails
- */
-
-type Targets = {
-  alk: number | null;
-  ca: number | null;
-  mg: number | null;
-  po4?: number | null;
-  no3?: number | null;
-  salinity?: number | null;
+type ParamBundle = {
+  param: Parameter;
+  productId: string | null;
+  product: Product | null;
+  latest: number | null;
+  dailySlope: number; // units/day, >0 means rising
+  recommendedDailyMl: number | null;
+  correctionMl: number | null;
+  warnings: string[];
+  saltmix: string; // user-entered baseline for 20% WC preview
+  wc20Result: number | null;
 };
 
-type Tank = {
-  id: string;
-  volume_liters: number | null;
-  volume_value?: number | null;
-  volume_unit?: string | null;
-};
-
-type Reading = {
-  parameter_key: 'alk'|'ca'|'mg';
-  value: number;
-  measured_at: string; // ISO
-};
-
-type ProductRow = {
-  parameter_key: 'alk'|'ca'|'mg';
-  dose_ref_ml: number | null;
-  delta_ref_value: number | null;
-  volume_ref_liters: number | null;
-};
-
-// Guardrails (per day changes)
-const CAP = {
-  alk: 0.25,   // dKH/day
-  ca: 25,      // ppm/day
-  mg: 100,     // ppm/day
-};
-
-// Helper to compute potency (delta per ml per L)
-function potencyPerMlPerL(prod?: ProductRow | null): number | null {
-  if (!prod) return null;
-  const { dose_ref_ml, delta_ref_value, volume_ref_liters } = prod;
-  if (!dose_ref_ml || !delta_ref_value || !volume_ref_liters) return null;
-  const ppmPerMlPerL = delta_ref_value / (dose_ref_ml * volume_ref_liters);
-  return ppmPerMlPerL; // units: (param units) per ml per L
-}
-
-// Compute ml needed to change `changeValue` in a tank of `liters` given potency
-function mlForChange(changeValue: number, liters: number, potency: number): number {
-  // changeValue (param units) = ml * potency * liters
-  // ml = changeValue / (potency * liters)
-  const denom = potency * Math.max(1e-9, liters);
-  return changeValue / denom;
-}
+const PARAM_KEYS: Array<'alk' | 'ca' | 'mg'> = ['alk','ca','mg'];
 
 export default function CalculatorPage() {
   const [tank, setTank] = useState<Tank | null>(null);
-  const [targets, setTargets] = useState<Targets | null>(null);
-  const [latest, setLatest] = useState<Record<'alk'|'ca'|'mg', Reading | null>>({
-    alk: null, ca: null, mg: null,
-  });
-  const [history, setHistory] = useState<Record<'alk'|'ca'|'mg', Reading[]>>({
-    alk: [], ca: [], mg: [],
-  });
-  const [products, setProducts] = useState<Record<'alk'|'ca'|'mg', ProductRow | null>>({
-    alk: null, ca: null, mg: null,
-  });
+  const [params, setParams] = useState<Parameter[]>([]);
+  const [targets, setTargets] = useState<TargetRow | null>(null);
+  const [bundles, setBundles] = useState<Record<number, ParamBundle>>({}); // key: parameter_id
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      // 1) user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setErr('Not signed in'); setLoading(false); return; }
 
-  async function load() {
-    setErr(null);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setErr('Please sign in.'); return; }
-
-    // 1) Tank (liters)
-    const { data: tankRow, error: tErr } = await supabase
-      .from('tanks')
-      .select('id, volume_liters, volume_value, volume_unit')
-      .eq('user_id', user.id)
-      .limit(1)
-      .maybeSingle();
-    if (tErr) { setErr(tErr.message); return; }
-    const liters = (() => {
-      if (!tankRow) return null;
-      if (tankRow.volume_liters != null) return Number(tankRow.volume_liters);
-      if (tankRow.volume_value != null) {
-        const val = Number(tankRow.volume_value);
-        const unit = (tankRow.volume_unit || 'L').toString().toLowerCase();
-        return unit === 'gal' ? val * 3.78541 : val;
-      }
-      return null;
-    })();
-    setTank(tankRow ? { id: tankRow.id, volume_liters: liters } : null);
-
-    // 2) Targets (single-row)
-    const { data: tgts, error: gErr } = await supabase
-      .from('targets')
-      .select('alk, ca, mg')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (gErr) { setErr(gErr.message); return; }
-    setTargets({
-      alk: toNum(tgts?.alk),
-      ca: toNum(tgts?.ca),
-      mg: toNum(tgts?.mg),
-    });
-
-    // 3) Preferred product potencies (join preferred_products -> products -> parameters)
-    // Expect a view or join via RPC; here we’ll do two queries for simplicity.
-    // a) get parameter ids/keys
-    const { data: params } = await supabase
-      .from('parameters')
-      .select('id, key')
-      .in('key', ['alk','ca','mg']);
-    const mapKeyToId: Record<string, number> = {};
-    const mapIdToKey: Record<number, 'alk'|'ca'|'mg'> = {} as any;
-    (params ?? []).forEach((p: any) => { mapKeyToId[p.key] = p.id; mapIdToKey[p.id] = p.key; });
-
-    // b) find preferred product per key (for first tank)
-    let preferred: Record<'alk'|'ca'|'mg', ProductRow | null> = { alk: null, ca: null, mg: null };
-    if (tankRow) {
-      const { data: pp } = await supabase
-        .from('preferred_products')
-        .select('parameter_id, product_id')
+      // 2) find/create tank
+      let { data: tanks, error: terr } = await supabase
+        .from('tanks')
+        .select('*')
         .eq('user_id', user.id)
-        .eq('tank_id', tankRow.id);
-      const productIds = (pp ?? []).map((r: any) => r.product_id);
-      if (productIds.length > 0) {
-        const { data: prods } = await supabase
-          .from('products')
-          .select('id, dose_ref_ml, delta_ref_value, volume_ref_liters, parameter_id');
-        // Note: RLS on products allows global (user_id null) + user-owned, as you configured
-        const byId: Record<string, any> = {};
-        (prods ?? []).forEach((p: any) => { byId[p.id] = p; });
-        (pp ?? []).forEach((row: any) => {
-          const key = mapIdToKey[row.parameter_id];
-          const p = byId[row.product_id];
-          if (key && p) {
-            preferred[key] = {
-              parameter_key: key,
-              dose_ref_ml: toNum(p.dose_ref_ml),
-              delta_ref_value: toNum(p.delta_ref_value),
-              volume_ref_liters: toNum(p.volume_ref_liters),
-            };
-          }
-        });
+        .order('created_at', { ascending: true })
+        .limit(1);
+      if (terr) { setErr(terr.message); setLoading(false); return; }
+      let t: Tank | null = (tanks && tanks[0]) || null;
+      if (!t) {
+        const { data: created, error: cerr } = await supabase
+          .from('tanks')
+          .insert({ user_id: user.id, name: 'My Tank', volume_value: 200, volume_unit: 'L', volume_liters: 200 })
+          .select('*')
+          .single();
+        if (cerr) { setErr(cerr.message); setLoading(false); return; }
+        t = created as unknown as Tank;
       }
-    }
-    setProducts(preferred);
+      if (!mounted) return;
+      setTank(t);
 
-    // 4) Readings (latest and history window)
-    if (tankRow) {
-      // Get last 21 days to compute slope
-      const since = new Date(Date.now() - 21 * 24 * 3600 * 1000).toISOString();
+      // 3) params (alk, ca, mg)
+      const { data: plist, error: perr } = await supabase
+        .from('parameters').select('*').in('key', PARAM_KEYS);
+      if (perr) { setErr(perr.message); setLoading(false); return; }
+      const byKey: Record<string, Parameter> = {};
+      (plist || []).forEach(p => { byKey[p.key] = p; });
+      setParams(plist || []);
+
+      // 4) targets
+      const { data: tgt } = await supabase.from('targets').select('*').eq('user_id', user.id).maybeSingle();
+      setTargets(tgt as TargetRow | null);
+
+      // 5) preferred products
+      const { data: prefs } = await supabase
+        .from('preferred_products').select('*')
+        .eq('user_id', user.id)
+        .eq('tank_id', t.id);
+      const prefMap = new Map<number, string>(); // parameter_id -> product_id
+      (prefs || []).forEach((pp: any) => prefMap.set(pp.parameter_id, pp.product_id));
+
+      // 6) latest readings and slopes (last 14 days)
+      const paramIds = (plist || []).map(p => p.id);
+      // Fetch recent readings
       const { data: readings } = await supabase
         .from('readings')
-        .select('parameter_id, value, measured_at')
-        .eq('user_id', user.id)
-        .eq('tank_id', tankRow.id)
-        .gte('measured_at', since)
+        .select('*')
+        .eq('tank_id', t.id)
+        .in('parameter_id', paramIds)
+        .gte('measured_at', new Date(Date.now() - 14*24*60*60*1000).toISOString())
         .order('measured_at', { ascending: true });
-      const byKey: Record<'alk'|'ca'|'mg', Reading[]> = { alk: [], ca: [], mg: [] };
-      (readings ?? []).forEach((r: any) => {
-        const key = mapIdToKey[r.parameter_id];
-        if (key) byKey[key].push({ parameter_key: key, value: Number(r.value), measured_at: r.measured_at });
+      const readingsByParam = new Map<number, Reading[]>();
+      (readings || []).forEach((r: any) => {
+        if (!readingsByParam.has(r.parameter_id)) readingsByParam.set(r.parameter_id, []);
+        readingsByParam.get(r.parameter_id)!.push(r as Reading);
       });
-      setHistory(byKey);
-      setLatest({
-        alk: lastOrNull(byKey.alk),
-        ca: lastOrNull(byKey.ca),
-        mg: lastOrNull(byKey.mg),
-      });
+
+      // 7) assemble bundles
+      const initial: Record<number, ParamBundle> = {};
+      for (const p of plist || []) {
+        const arr = readingsByParam.get(p.id) || [];
+        const latest = arr.length ? arr[arr.length - 1].value : null;
+        const { slopePerDay: slope } = slopePerDay(arr.map(x => ({ value: x.value, measured_at: x.measured_at })));
+        initial[p.id] = {
+          param: p,
+          productId: prefMap.get(p.id) ?? null,
+          product: null,
+          latest,
+          dailySlope: slope,
+          recommendedDailyMl: null,
+          correctionMl: null,
+          warnings: [],
+          saltmix: '',
+          wc20Result: latest,
+        };
+      }
+      setBundles(initial);
+
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // compute recommendations when we have all pieces (tank, targets, product potency, etc.)
+  const computeForParam = (pb: ParamBundle): ParamBundle => {
+    if (!tank) return pb;
+    const tankL = tank.volume_liters ?? tank.volume_value ?? 0;
+    const warnings: string[] = [];
+    let recommendedDailyMl: number | null = null;
+    let correctionMl: number | null = null;
+    let wc20Result: number | null = pb.latest;
+
+    // find target for this param
+    const tkey = pb.param.key as 'alk'|'ca'|'mg';
+    const targetValue = targets ? (targets as any)[tkey] as number | null : null;
+    const current = pb.latest;
+
+    // daily consumption interpreted as positive when falling (consumption): -slope if slope < 0 else 0
+    const consumptionPerDay = pb.dailySlope < 0 ? (-pb.dailySlope) : 0;
+
+    // product potency
+    const unitsPerMlPerL = pb.product
+      ? potencyPerMlPerL({
+          dose_ref_ml: pb.product.dose_ref_ml,
+          delta_ref_value: pb.product.delta_ref_value,
+          volume_ref_liters: pb.product.volume_ref_liters,
+        })
+      : null;
+
+    if (unitsPerMlPerL != null && tankL > 0) {
+      if (consumptionPerDay > 0) {
+        recommendedDailyMl = doseMlForDelta(consumptionPerDay, unitsPerMlPerL, tankL);
+      } else {
+        recommendedDailyMl = 0;
+      }
     }
-  }
 
-  const lines = useMemo(() => {
-    if (!tank?.volume_liters) return null;
-    const L = tank.volume_liters;
-
-    const out: { key: 'alk'|'mg'|'ca'; label: string; current: number|null; target: number|null; currentDose: number|null; newDose: number|null; note?: string }[] = [];
-
-    (['alk','mg','ca'] as const).forEach((key) => {
-      const current = latest[key]?.value ?? null;
-      const target = (targets as any)?.[key] ?? null;
-
-      // Potency
-      const pot = potencyPerMlPerL(products[key]);
-      // Consumption per day from history (positive means tank is using it daily)
-      const cons = consumptionPerDay(history[key]);
-      // Current daily dose in ml/day to maintain: convert consumption to ml/day
-      const currentDose = (pot && L && cons && cons > 0) ? mlForChange(cons, L, pot) : 0;
-
-      // Correction toward target (units/day), capped
-      let correctionUnitsPerDay = 0;
-      if (current != null && target != null) {
-        const diff = target - current; // positive means we need to raise
-        const cap = CAP[key];
-        if (diff > 0) correctionUnitsPerDay = Math.min(diff, cap);
-        else if (diff < 0) {
-          // above target: reduce — simplest rule is to pause dosing
-          correctionUnitsPerDay = diff; // negative; we'll clamp later
-        }
+    if (current != null && targetValue != null && unitsPerMlPerL != null && tankL > 0) {
+      const delta = targetValue - current;
+      // Only suggest correction when below target (positive delta)
+      if (delta > 0) {
+        correctionMl = doseMlForDelta(delta, unitsPerMlPerL, tankL);
+      } else if (delta < 0) {
+        // Above target: suggest hold/reduce
+        warnings.push('Above target — hold dosing or consider a partial water change.');
       }
-
-      let newDose = currentDose;
-      let note = '';
-
-      if (pot && L && correctionUnitsPerDay !== 0) {
-        const correctionMl = mlForChange(Math.abs(correctionUnitsPerDay), L, pot);
-        if (correctionUnitsPerDay > 0) {
-          newDose = currentDose + correctionMl;
-          note = `+${round(correctionMl)} ml/day to rise ~${round(correctionUnitsPerDay)} ${unit(key)}/day`;
-        } else {
-          // reduce dose; don't go below 0
-          newDose = Math.max(0, currentDose - correctionMl);
-          note = `-${round(correctionMl)} ml/day to fall ~${round(Math.abs(correctionUnitsPerDay))} ${unit(key)}/day`;
-        }
+      // near target guardrail
+      const thr = nearThreshold[tkey];
+      if (Math.abs(delta) <= thr) {
+        warnings.push('Near target — maintain current dosing; avoid big corrections.');
       }
+    }
 
-      out.push({
-        key,
-        label: label(key),
-        current,
-        target,
-        currentDose: isFiniteNum(currentDose) ? currentDose : null,
-        newDose: isFiniteNum(newDose) ? newDose : null,
-        note
-      });
+    // 20% water change preview if user filled saltmix baseline
+    if (current != null && pb.saltmix.trim() !== '') {
+      const sm = Number(pb.saltmix);
+      if (isFinite(sm)) wc20Result = waterChangeResult(current, sm, 0.2);
+    }
+
+    return { ...pb, recommendedDailyMl, correctionMl, warnings, wc20Result };
+  };
+
+  const recomputeAll = (state: Record<number, ParamBundle>) => {
+    const next: Record<number, ParamBundle> = {};
+    for (const [pid, pb] of Object.entries(state)) {
+      next[Number(pid)] = computeForParam(pb as ParamBundle);
+    }
+    return next;
+  };
+
+  useEffect(() => {
+    // when targets/tank/bundles change, recompute
+    setBundles(prev => recomputeAll(prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tank?.volume_liters, targets]);
+
+  const setBundle = (parameter_id: number, patch: Partial<ParamBundle>) => {
+    setBundles(prev => {
+      const merged = { ...prev[parameter_id], ...patch } as ParamBundle;
+      const next = { ...prev, [parameter_id]: merged };
+      return recomputeAll(next);
     });
+  };
 
-    return out;
-  }, [tank, targets, latest, products, history]);
+  const onSelectProduct = async (parameter_id: number, productId: string | null, product?: Product | null) => {
+    if (!tank) return;
+    setBundle(parameter_id, { productId, product: product ?? null });
+    // Persist selection into preferred_products so it sticks across sessions
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user || !productId) return;
+    await supabase.from('preferred_products').upsert({
+      user_id: user.id, tank_id: tank.id, parameter_id, product_id: productId
+    }, { onConflict: 'user_id,tank_id,parameter_id' });
+  };
 
-  const issues = useMemo(() => {
-    const msgs: string[] = [];
-    if (!tank?.volume_liters) msgs.push('Tank volume unknown.');
-    if (!targets) msgs.push('No targets saved.');
-    // If any product potency is missing, warn
-    (['alk','ca','mg'] as const).forEach(k => {
-      if (!potencyPerMlPerL(products[k])) msgs.push(`${label(k)} product potency unknown.`);
-      if (!latest[k]) msgs.push(`No recent reading for ${label(k)}.`);
-    });
-    return Array.from(new Set(msgs)).join(' ');
-  }, [tank, targets, products, latest]);
+  if (loading) return <main className="p-4"><h1 className="text-2xl font-semibold">Calculator</h1><p>Loading…</p></main>;
+  if (err) return <main className="p-4"><h1 className="text-2xl font-semibold">Calculator</h1><p className="text-red-600">{err}</p></main>;
+  if (!tank) return <main className="p-4"><h1 className="text-2xl font-semibold">Calculator</h1><p>No tank found.</p></main>;
+
+  const paramById = new Map(params.map(p => [p.id, p]));
 
   return (
-    <main className="mx-auto max-w-3xl p-4 space-y-4">
-      <h1 className="text-xl font-semibold">Calculator</h1>
+    <main className="max-w-4xl mx-auto p-4 space-y-6">
+      <h1 className="text-2xl font-semibold">Calculator</h1>
+      <p className="text-sm text-gray-600">
+        Recommends daily dose from recent consumption and a gentle correction if below target.
+        Set your targets on the Dashboard. Only Alkalinity, Calcium, and Magnesium are considered here.
+      </p>
 
-      {issues && issues.length > 0 ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          {issues}
-        </div>
-      ) : null}
-
-      <section className="rounded-md border p-4 space-y-2">
-        <h2 className="font-medium">Simple Plan</h2>
-        <p className="text-xs opacity-70">Guardrails: ≤ 0.25 dKH/day Alk, ≤ 25 ppm/day Ca, ≤ 100 ppm/day Mg.</p>
-        <ul className="text-sm">
-          {lines?.map((ln) => (
-            <li key={ln.key} className="py-1">
-              <b>{ln.label}</b> — {fmt(ln.current)} {unit(ln.key)} {'>'} {fmt(ln.target)} {unit(ln.key)} {'>'} Current Daily Dose {fmtMl(ln.currentDose)} = <b>{fmtMl(ln.newDose)}</b> {ln.note ? <span className="opacity-70">({ln.note})</span> : null}
-            </li>
-          ))}
-        </ul>
+      <section className="rounded-lg border p-4">
+        <h2 className="text-lg font-medium">Tank</h2>
+        <p className="text-sm text-gray-700">Volume: {tank.volume_liters ?? tank.volume_value ?? 0} L</p>
       </section>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {params.map((p) => {
+          const pb = bundles[p.id];
+          if (!pb) return null;
+          const tkey = p.key as 'alk'|'ca'|'mg';
+          const targetValue = targets ? (targets as any)[tkey] as number | null : null;
+          return (
+            <section key={p.id} className="rounded-lg border p-4 space-y-3">
+              <h3 className="font-medium">{p.display_name}</h3>
+
+              <ProductSelectInline
+                tank={tank}
+                parameter={p}
+                value={pb.productId}
+                onChange={(id, prod) => onSelectProduct(p.id, id, prod)}
+              />
+
+              <div className="text-sm space-y-1">
+                <div>Latest reading: {pb.latest ?? '—'} {p.unit}</div>
+                <div>Target: {targetValue ?? '—'} {p.unit}</div>
+                <div>Trend (7–14 days): {pb.dailySlope > 0 ? '+' : ''}{pb.dailySlope.toFixed(3)} {p.unit}/day</div>
+              </div>
+
+              <div className="text-sm rounded-md bg-gray-50 p-2">
+                <div>
+                  <span className="font-medium">Daily dose:</span>{' '}
+                  {pb.recommendedDailyMl != null ? `${pb.recommendedDailyMl.toFixed(2)} ml/day` : '—'}
+                </div>
+                <div>
+                  <span className="font-medium">Correction:</span>{' '}
+                  {pb.correctionMl != null ? `${pb.correctionMl.toFixed(2)} ml now` : '—'}
+                </div>
+              </div>
+
+              <div className="text-xs text-amber-700 space-y-1">
+                {pb.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-sm">Salt mix baseline ({p.unit}) for 20% WC preview</label>
+                <input
+                  className="w-full rounded-md border px-3 py-2"
+                  value={pb.saltmix}
+                  onChange={(e) => setBundle(p.id, { saltmix: e.target.value })}
+                  placeholder={tkey === 'alk' ? '8.0' : (tkey === 'ca' ? '430' : '1350')}
+                />
+                <div className="text-xs text-gray-600">
+                  After 20% water change: {pb.wc20Result != null ? `${pb.wc20Result.toFixed(2)} ${p.unit}` : '—'}
+                </div>
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </main>
   );
-}
-
-// Utilities
-function toNum(x: any): number | null {
-  if (x === null || x === undefined) return null;
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
-}
-function label(k: 'alk'|'ca'|'mg') {
-  return k === 'alk' ? 'Alkalinity' : k === 'ca' ? 'Calcium' : 'Magnesium';
-}
-function unit(k: 'alk'|'ca'|'mg') {
-  return k === 'alk' ? 'dKH' : 'ppm';
-}
-function fmt(n?: number | null) {
-  return n === null || n === undefined || Number.isNaN(n) ? '—' : round(n);
-}
-function fmtMl(n?: number | null) {
-  return n === null || n === undefined || Number.isNaN(n) ? '— ml/day' : `${round(n)} ml/day`;
-}
-function round(n: number, dp = 2) {
-  return Math.round(n * Math.pow(10, dp)) / Math.pow(10, dp);
-}
-function isFiniteNum(n: any) {
-  return typeof n === 'number' && Number.isFinite(n);
-}
-function lastOrNull<T>(arr: T[]): T | null {
-  return arr.length ? arr[arr.length - 1] : null;
-}
-
-// Estimate consumption per day from history using simple slope over time
-function consumptionPerDay(points: Reading[]): number | null {
-  // Consumption is positive if the parameter is dropping over time
-  if (!points || points.length < 2) return null;
-  const first = points[0];
-  const last = points[points.length - 1];
-  const t0 = new Date(first.measured_at).getTime();
-  const t1 = new Date(last.measured_at).getTime();
-  const days = Math.max(1e-9, (t1 - t0) / (1000*3600*24));
-  const delta = last.value - first.value; // if negative, it's being consumed
-  const perDay = -delta / days; // make positive for consumption
-  return perDay > 0 ? perDay : 0;
 }
