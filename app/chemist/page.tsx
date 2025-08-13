@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-static';
 
-/**
- * Chemist tab has been removed. Redirect to Products.
- */
+/** Chemist tab removed. */
 export default function Page() {
-  redirect('/products');
+  notFound();
 }

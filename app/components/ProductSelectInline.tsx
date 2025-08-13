@@ -7,7 +7,7 @@ import type { Product, Parameter, Tank } from '@/lib/types';
 type Props = {
   tank: Tank;
   parameter: Parameter;
-  value: string | null; // selected product_id or null
+  value: string | null;
   onChange: (productId: string | null, product?: Product | null) => void;
 };
 
@@ -27,7 +27,6 @@ export default function ProductSelectInline({ tank, parameter, value, onChange }
         setLoading(false);
         return;
       }
-      // Load global + user products for this parameter
       const { data, error } = await supabase
         .from('products')
         .select('*')

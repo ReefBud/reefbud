@@ -19,20 +19,12 @@ export type Product = {
   volume_ref_liters: number | null;
 };
 
-export type PreferredProduct = {
-  id: string;
-  user_id: string;
-  tank_id: string;
-  parameter_id: number;
-  product_id: string;
-};
-
 export type Tank = {
   id: string;
   user_id: string;
   name: string | null;
   volume_value: number | null;
-  volume_unit: string | null; // 'L' or 'gal'
+  volume_unit: string | null;
   volume_liters: number | null;
 };
 
@@ -53,5 +45,5 @@ export type Reading = {
   tank_id: string;
   parameter_id: number;
   value: number;
-  measured_at: string; // ISO
+  measured_at: string;
 };
