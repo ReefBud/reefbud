@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -5,6 +6,15 @@ import { createClient } from '@supabase/supabase-js';
 import { computeDoseMl } from '@/lib/dose';
 
 type Parameter = { id: number; key: string; unit: string; display_name?: string | null };
+type TankRaw = {
+  id: string;
+  name?: string | null;
+  volume_liters?: number | null;
+  volume?: number | null;
+  liters?: number | null;
+  tank_volume?: number | null;
+  size_liters?: number | null;
+};
 type Tank = { id: string; name?: string | null; volume_liters?: number | null };
 type Targets = { [key: string]: number | null };
 type Reading = { parameter_id: number; value: number; measured_at: string };
@@ -20,9 +30,7 @@ type Product = {
   volume_ref_liters?: number | null;
 };
 
-// Restrict to the five parameters requested
 const PARAM_KEYS = ['alk', 'ca', 'mg', 'po4', 'no3'] as const;
-type ParamKey = typeof PARAM_KEYS[number];
 
 export default function CalculatorPage() {
   const supabase = useMemo(() => createClient(
@@ -30,12 +38,11 @@ export default function CalculatorPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   ), []);
 
-  const [userId, setUserId] = useState<string | null>(null);
   const [tank, setTank] = useState<Tank | null>(null);
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [targets, setTargets] = useState<Targets>({});
-  const [latest, setLatest] = useState<Record<number, Reading | null>>({}); // by parameter_id
-  const [preferred, setPreferred] = useState<Record<number, Preferred | null>>({}); // by parameter_id
+  const [latest, setLatest] = useState<Record<number, Reading | null>>({});
+  const [preferred, setPreferred] = useState<Record<number, Preferred | null>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -50,49 +57,39 @@ export default function CalculatorPage() {
         return;
       }
       const uid = userData.user.id;
-      setUserId(uid);
 
-      // 1) Parameters (pull IDs & units for the five keys)
+      // Parameters
       const { data: pData } = await supabase
         .from('parameters')
         .select('id, key, unit, display_name')
         .in('key', PARAM_KEYS as any);
+      if (mounted) setParameters(pData ?? []);
 
-      const params: Parameter[] = pData ?? [];
-      if (mounted) setParameters(params);
-
-      // 2) Pick a tank (first one) just to get the volume; UI is per-user
+      // Tank: tolerate multiple legacy volume column names
       let t: Tank | null = null;
       {
         const { data: t1 } = await supabase
           .from('tanks')
-          .select('id, name, volume_liters')
+          .select('id, name, volume_liters, volume, liters, tank_volume, size_liters')
           .eq('user_id', uid)
           .order('created_at')
           .limit(1)
           .maybeSingle();
-        if (t1) t = t1 as Tank;
-      }
-      if (t == null) {
-        // Optional: create a default tank to avoid null volume
-        const { data: created } = await supabase
-          .from('tanks')
-          .insert({ user_id: uid, name: 'My Tank', volume_liters: 200 })
-          .select('id, name, volume_liters')
-          .single();
-        if (created) t = created as Tank;
+        if (t1) {
+          const raw = t1 as TankRaw;
+          const vol = raw.volume_liters ?? raw.volume ?? raw.liters ?? raw.tank_volume ?? raw.size_liters ?? null;
+          t = { id: raw.id, name: raw.name, volume_liters: vol };
+        }
       }
       if (mounted) setTank(t);
 
-      // 3) Targets — **from Dashboard only** (user-level 'targets' table)
-      //    We ignore any tank-specific targets here by request.
+      // Dashboard targets for this user
       {
         const { data: tg } = await supabase
           .from('targets')
           .select('alk, ca, mg, po4, no3')
           .eq('user_id', uid)
           .maybeSingle();
-
         if (mounted) {
           setTargets({
             alk: tg?.alk ?? null,
@@ -104,7 +101,7 @@ export default function CalculatorPage() {
         }
       }
 
-      // 4) Preferred products per parameter (Chemist selection)
+      // Preferred products (Chemist) for the selected tank
       if (t?.id) {
         const { data: pref } = await supabase
           .from('preferred_products')
@@ -125,7 +122,7 @@ export default function CalculatorPage() {
         if (mounted) setPreferred(map);
       }
 
-      // 5) Latest readings (optional; shows current values)
+      // Latest readings per parameter for this tank
       if (t?.id) {
         const { data: r } = await supabase
           .from('readings')
@@ -153,7 +150,7 @@ export default function CalculatorPage() {
 
     let mlNeeded: number | null = null;
     let deltaText = '';
-    let info: string[] = [];
+    const info: string[] = [];
 
     if (latestReading != null && target != null && product && Vtank != null) {
       const delta = target - latestReading;
@@ -165,7 +162,7 @@ export default function CalculatorPage() {
           volume_ref_liters: product.volume_ref_liters!,
         });
       } else {
-        info.push('Missing potency on selected product (dose, change, ref volume).');
+        info.push('Missing potency on selected product.');
       }
     } else {
       if (latestReading == null) info.push('No recent reading.');
@@ -231,10 +228,10 @@ export default function CalculatorPage() {
     <main className="max-w-5xl mx-auto p-4">
       <h1 className="text-2xl font-semibold">Calculator</h1>
       <p className="text-sm text-gray-600 mt-1">
-        Targets are pulled from your Dashboard. Advanced correction fields have been removed.
+        Targets are pulled from your Dashboard.
       </p>
 
-      <div className="mt-4 text-sm text-gray-700">
+      <div className="mt-4 text-sm text-gray-700 space-y-1">
         <div><span className="font-medium">Tank:</span> {tank?.name ?? '—'} ({tank?.volume_liters ?? '—'} L)</div>
       </div>
 
