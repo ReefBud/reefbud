@@ -1,38 +1,37 @@
 
-# How to clear the messages in Calculator
+# ReefBud v9 — Fixes for your latest errors
 
-You're seeing:
-- "No recent reading."
-- "Tank volume unknown."
-- "No product selected in Chemist."
+You hit:
+- targets UNIQUE already exists
+- readings.value does not exist (seed failed)
 
-This bundle helps in two ways:
-1) The calculator now tolerates older tank schemas by coalescing volume across `volume_liters`, `volume`, `liters`, `tank_volume`, `size_liters`.
-2) Two SQL helpers to quickly set a tank volume and seed readings.
+Run these in Supabase → SQL:
 
-## Files
+1) (If you haven't yet) Run the earlier hardeners:
+   - 2025-08-13_readings_hardening_v2.sql (from ReefBud_v8)
 
-- `app/calculator/page.tsx` — drop-in replacement that uses the COALESCE-style fallback on tank volume.
-- `lib/dose.ts` — calculation helper.
-- `supabase/sql/2025-08-13_set_tank_volume_easy.sql` — set tank volume (edit liters at top).
-- `supabase/sql/2025-08-13_seed_latest_readings_template.sql` — seed a reading per parameter (edit values at top).
+2) Add and backfill `readings.value` so seeding works:
+   - `supabase/sql/2025-08-13_readings_add_value_and_backfill.sql`
 
-## Steps
+3) If needed, guard UNIQUE on targets (no-op if it exists):
+   - `supabase/sql/2025-08-13_targets_unique_guard.sql`
 
-1) **Set your tank liters**
-   - In Supabase → SQL → run: `supabase/sql/2025-08-13_set_tank_volume_easy.sql`
-   - Change `desired_liters` to your actual tank size first.
+4) (Optional) Ensure RLS on targets is correct:
+   - `supabase/sql/2025-08-13_targets_rls_policies.sql`
 
-2) **Seed one reading per parameter** (or log through your UI)
-   - Run: `supabase/sql/2025-08-13_seed_latest_readings_template.sql`
-   - Edit the v_alk / v_ca / v_mg / v_po4 / v_no3 values first.
+5) Re-run the readings seed you used before (e.g., `2025-08-13_seed_readings_v2.sql`)
+   - Now it will find `parameter_id`, `measured_at`, and `value`
 
-3) **Ensure Chemist selection exists**
-   - In your app, go to **Chemist** and select a product for Alk, Ca, Mg, PO4, NO3.
-   - Make sure the product has potency (dose ml / delta units / ref liters).
+### Dashboard saving: use UPSERT
+If your Dashboard is still trying to INSERT, switch to UPSERT. See:
+- `app/dashboard/dashboard_upsert_example.ts`
 
-4) **Replace Calculator page**
-   - Copy `app/calculator/page.tsx` into your project, overwriting the existing page.
-   - Restart your dev server and open `/calculator`.
+This uses `upsert(..., { onConflict: 'user_id' })` so it updates the existing row instead of causing a duplicate key error.
 
-When those three pieces exist (volume, target, product+potency, recent reading), you'll get a dose instead of warnings.
+---
+Git:
+```
+git add -A
+git commit -m "chore(db): add readings.value with safe backfill; guard UNIQUE(targets.user_id); example upsert for Dashboard targets"
+git push
+```
