@@ -1,10 +1,4 @@
-
-export type Potency = {
-  dose_ref_ml: number;
-  delta_ref_value: number;
-  volume_ref_liters: number;
-};
-
+export type Potency = { dose_ref_ml: number; delta_ref_value: number; volume_ref_liters: number; };
 export function computeDoseMl(deltaTarget: number, Vtank: number, potency: Potency): number | null {
   const { dose_ref_ml, delta_ref_value, volume_ref_liters } = potency;
   if (Vtank <= 0 || dose_ref_ml <= 0 || delta_ref_value <= 0 || volume_ref_liters <= 0) return null;
