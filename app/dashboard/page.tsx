@@ -123,65 +123,65 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className=\"mx-auto max-w-3xl p-4 space-y-4\">
-      <h1 className=\"text-xl font-semibold\">Dashboard</h1>
+    <main className="mx-auto max-w-3xl p-4 space-y-4">
+      <h1 className="text-xl font-semibold">Dashboard</h1>
 
       {/* Tank volume */}
-      <section className=\"rounded-md border p-4 space-y-3\">
-        <h2 className=\"font-medium\">Tank Volume</h2>
-        <div className=\"grid grid-cols-1 gap-3 sm:grid-cols-3\">
-          <label className=\"text-sm\">
-            <span className=\"mb-1 block opacity-75\">Value</span>
+      <section className="rounded-md border p-4 space-y-3">
+        <h2 className="font-medium">Tank Volume</h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <label className="text-sm">
+            <span className="mb-1 block opacity-75">Value</span>
             <input
-              type=\"number\"
-              step=\"any\"
+              type="number"
+              step="any"
               value={volValue}
               onChange={e => setVolValue(e.target.value)}
-              className=\"w-full rounded-md border px-2 py-1.5\"
+              className="w-full rounded-md border px-2 py-1.5"
             />
           </label>
-          <label className=\"text-sm\">
-            <span className=\"mb-1 block opacity-75\">Unit</span>
+          <label className="text-sm">
+            <span className="mb-1 block opacity-75">Unit</span>
             <select
-              className=\"w-full rounded-md border px-2 py-1.5\"
+              className="w-full rounded-md border px-2 py-1.5"
               value={volUnit}
               onChange={e => setVolUnit(e.target.value as 'L' | 'gal')}
             >
-              <option value=\"L\">L</option>
-              <option value=\"gal\">gal</option>
+              <option value="L">L</option>
+              <option value="gal">gal</option>
             </select>
           </label>
-          <div className=\"text-sm self-end\">
-            <div className=\"opacity-75\">Normalized (liters)</div>
-            <div className=\"font-medium\">{tank?.volume_liters ?? '—'}</div>
+          <div className="text-sm self-end">
+            <div className="opacity-75">Normalized (liters)</div>
+            <div className="font-medium">{tank?.volume_liters ?? '—'}</div>
           </div>
         </div>
       </section>
 
       {/* Target Parameters */}
-      <section className=\"rounded-md border p-4 space-y-3\">
-        <h2 className=\"font-medium\">Target Parameters</h2>
+      <section className="rounded-md border p-4 space-y-3">
+        <h2 className="font-medium">Target Parameters</h2>
 
-        <div className=\"grid grid-cols-1 gap-3 sm:grid-cols-3\">
-          <Field label=\"Alkalinity (dKH)\" value={alk} setValue={setAlk} />
-          <Field label=\"Calcium (ppm)\" value={ca} setValue={setCa} />
-          <Field label=\"Magnesium (ppm)\" value={mg} setValue={setMg} />
-          <Field label=\"Phosphate (ppm)\" value={po4} setValue={setPo4} />
-          <Field label=\"Nitrate (ppm)\" value={no3} setValue={setNo3} />
-          <Field label=\"Salinity (ppt)\" value={sal} setValue={setSal} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field label="Alkalinity (dKH)" value={alk} setValue={setAlk} />
+          <Field label="Calcium (ppm)" value={ca} setValue={setCa} />
+          <Field label="Magnesium (ppm)" value={mg} setValue={setMg} />
+          <Field label="Phosphate (ppm)" value={po4} setValue={setPo4} />
+          <Field label="Nitrate (ppm)" value={no3} setValue={setNo3} />
+          <Field label="Salinity (ppt)" value={sal} setValue={setSal} />
         </div>
       </section>
 
-      <div className=\"flex items-center gap-3\">
+      <div className="flex items-center gap-3">
         <button
           onClick={saveAll}
           disabled={busy}
-          className=\"rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-60\"
+          className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-60"
         >
           {busy ? 'Saving…' : 'Save tank & targets'}
         </button>
-        {msg && <span className=\"text-green-700 text-sm\">{msg}</span>}
-        {err && <span className=\"text-red-600 text-sm\">Error: {err}</span>}
+        {msg && <span className="text-green-700 text-sm">{msg}</span>}
+        {err && <span className="text-red-600 text-sm">Error: {err}</span>}
       </div>
     </main>
   );
@@ -197,14 +197,14 @@ function Field({
   setValue: (s: string) => void;
 }) {
   return (
-    <label className=\"text-sm\">
-      <span className=\"mb-1 block opacity-75\">{label}</span>
+    <label className="text-sm">
+      <span className="mb-1 block opacity-75">{label}</span>
       <input
-        type=\"number\"
-        step=\"any\"
+        type="number"
+        step="any"
         value={value}
         onChange={e => setValue(e.target.value)}
-        className=\"w-full rounded-md border px-2 py-1.5 bg-[linear-gradient(#fafafa,#f3f4f6)]\"
+        className="w-full rounded-md border px-2 py-1.5 bg-[linear-gradient(#fafafa,#f3f4f6)]"
       />
     </label>
   );

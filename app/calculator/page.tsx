@@ -71,20 +71,20 @@ export default function CalculatorPage() {
   }, [liters, targets]);
 
   return (
-    <main className=\"mx-auto max-w-3xl p-4 space-y-4\">
-      <h1 className=\"text-xl font-semibold\">Calculator</h1>
+    <main className="mx-auto max-w-3xl p-4 space-y-4">
+      <h1 className="text-xl font-semibold">Calculator</h1>
       {issues && issues.length > 0 ? (
-        <div className=\"rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900\">
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           {issues}
         </div>
       ) : null}
 
-      <section className=\"rounded-md border p-4\">
-        <h2 className=\"font-medium mb-2\">Snapshot</h2>
-        <ul className=\"text-sm space-y-1\">
-          <li><span className=\"opacity-70\">Tank volume (L):</span> <span className=\"font-medium\">{liters ?? '—'}</span></li>
-          <li><span className=\"opacity-70\">Targets:</span></li>
-          <li className=\"grid grid-cols-2 sm:grid-cols-3 gap-1\">
+      <section className="rounded-md border p-4">
+        <h2 className="font-medium mb-2">Snapshot</h2>
+        <ul className="text-sm space-y-1">
+          <li><span className="opacity-70">Tank volume (L):</span> <span className="font-medium">{liters ?? '—'}</span></li>
+          <li><span className="opacity-70">Targets:</span></li>
+          <li className="grid grid-cols-2 sm:grid-cols-3 gap-1">
             <span>Alk: <b>{fmt(targets?.alk)}</b> dKH</span>
             <span>Ca: <b>{fmt(targets?.ca)}</b> ppm</span>
             <span>Mg: <b>{fmt(targets?.mg)}</b> ppm</span>
@@ -96,8 +96,8 @@ export default function CalculatorPage() {
       </section>
 
       {/* Your dosing math UI remains here; this file’s focus is reading liters + targets */}
-      {msg && <div className=\"text-green-700 text-sm\">{msg}</div>}
-      {err && <div className=\"text-red-600 text-sm\">Error: {err}</div>}
+      {msg && <div className="text-green-700 text-sm">{msg}</div>}
+      {err && <div className="text-red-600 text-sm">{err}</div>}
     </main>
   );
 }
