@@ -1,24 +1,15 @@
-# ReefBud Calculator — dashboard targets + products + results trend (2025-08-14b)
+# ReefBud Calculator — 2025-08-14d
 
-What this does
-- Reads **tank size** and **targets** from your Dashboard tables (`tanks`, `targets`).
-- Reads **which product you are using** from `preferred_products`, and its **potency** from `products`.
-- Reads **previous parameters** from `results` to compute the trend (slope).
-- Computes the **Maintain dose** as an absolute daily number:
-  - `maintain = max(0, currentDailyMl − slope / (potency × tank_L))`
-- Shows **Add extra** or **Reduce by** vs your current daily input.
-- Computes **Correction now** to reach target using product potency and warns if it exceeds safe daily spikes.
+This patch ensures the calculator:
+- Reads tank size & targets from Dashboard
+- Uses your selected product (preferred_products) + product potency (products)
+- Uses a 3/7/14 day Results window to compute slope
+- Calculates Maintain dose with: `maintain = currentDailyMl − slope / (potency × tank_L)`
+- Shows Add extra/Reduce by and a safe Correction now
+- Recomputes immediately on dose input and on per-parameter Refresh
 
-Safe correction guidance
-- Alk ≈ 1.0 dKH/day
-- Ca ≈ 20 ppm/day
-- Mg ≈ 50 ppm/day
-
-Install
-Drop the files in place, then:
-
-```
-git add -A && git commit -m "calc: dashboard targets + tank; preferred products + potency; results trend; maintain dose with math shown" && git push
-```
-
-Open `/calculator`, pick products (if not already saved), type your current daily dose for each parameter, and click Refresh after logging a new Result.
+Install:
+1) Drop these files into your repo in the same paths.
+2) Commit:
+   git add -A && git commit -m "calc: maintain formula + trend window; recompute on input; safe correction" && git push
+3) Open /calculator and test.

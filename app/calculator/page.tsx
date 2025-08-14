@@ -29,6 +29,7 @@ export default function CalculatorPage() {
   const [targets, setTargets] = useState<TargetRow | null>(null);
   const [bundles, setBundles] = useState<Record<number, ParamBundle>>({});
   const [productsById, setProductsById] = useState<Record<string, Product>>({});
+  const [trendDays, setTrendDays] = useState<number>(7);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -36,6 +37,7 @@ export default function CalculatorPage() {
   const tankLiters = tank?.volume_liters ?? tank?.volume_value ?? 0;
   const localDoseKey = (pid: number, pkey: string) => userId && tank ? `dose:${userId}:${tank.id}:${pkey}` : '';
 
+  // Initial load
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -46,7 +48,7 @@ export default function CalculatorPage() {
       if (!user) { setErr('Not signed in'); setLoading(false); return; }
       setUserId(user.id);
 
-      // Tank from DB (Dashboard)
+      // Tank (Dashboard)
       let { data: tanks, error: terr } = await supabase
         .from('tanks').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(1);
       if (terr) { setErr(terr.message); setLoading(false); return; }
@@ -61,23 +63,23 @@ export default function CalculatorPage() {
       if (!mounted) return;
       setTank(t);
 
-      // Parameters (Alk/Ca/Mg only)
+      // Parameters
       const { data: plist, error: perr } = await supabase.from('parameters').select('*').in('key', PARAM_KEYS);
       if (perr) { setErr(perr.message); setLoading(false); return; }
       setParams(plist || []);
 
-      // Targets from Dashboard
+      // Targets (Dashboard)
       const { data: tgt } = await supabase.from('targets').select('*').eq('user_id', user.id).maybeSingle();
       setTargets(tgt as TargetRow | null);
 
-      // Preferred products (what the user is using)
+      // Preferred products (what you're using)
       const { data: prefs } = await supabase
         .from('preferred_products').select('parameter_id,product_id')
         .eq('user_id', user.id).eq('tank_id', t!.id);
       const prefIdByParam = new Map<number, string>();
       (prefs || []).forEach((pp: any) => prefIdByParam.set(pp.parameter_id, pp.product_id));
 
-      // Products list for these params
+      // Products for these params
       const paramIds = (plist || []).map(p => p.id);
       const { data: prods, error: perror } = await supabase
         .from('products').select('*')
@@ -88,20 +90,10 @@ export default function CalculatorPage() {
       (prods || []).forEach((p: any) => { pMap[p.id] = p as Product; });
       setProductsById(pMap);
 
-      // Results history (previous parameters)
-      const { data: results } = await supabase
-        .from('results').select('*')
-        .eq('tank_id', t!.id)
-        .in('parameter_id', paramIds)
-        .gte('measured_at', new Date(Date.now() - 14*24*60*60*1000).toISOString())
-        .order('measured_at', { ascending: true });
-      const byParam: Record<number, Reading[]> = {};
-      (results || []).forEach((r: any) => {
-        if (!byParam[r.parameter_id]) byParam[r.parameter_id] = [];
-        byParam[r.parameter_id].push(r as Reading);
-      });
+      // Results history (trendDays window)
+      const byParam = await fetchResultsByDays(t!.id, paramIds, trendDays);
 
-      // Build initial bundles
+      // Build bundles
       const initial: Record<number, ParamBundle> = {};
       for (const p of plist || []) {
         const arr = byParam[p.id] || [];
@@ -123,7 +115,7 @@ export default function CalculatorPage() {
         };
       }
       if (!mounted) return;
-      setBundles(recomputeAll(initial, t, tgt as TargetRow | null, pMap));
+      setBundles(computeAll(initial, t, tgt as TargetRow | null, pMap));
 
       setLoading(false);
     })();
@@ -131,28 +123,59 @@ export default function CalculatorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const getProduct = (productId: string | null): Product | null => {
-    if (!productId) return null;
-    return productsById[productId] || null;
-  };
+  // Re-fetch trend when trendDays changes
+  useEffect(() => {
+    (async () => {
+      if (!tank || params.length === 0) return;
+      const paramIds = params.map(p => p.id);
+      const byParam = await fetchResultsByDays(tank.id, paramIds, trendDays);
+      const next: Record<number, ParamBundle> = { ...bundles };
+      for (const p of params) {
+        const arr = byParam[p.id] || [];
+        const latest = arr.length ? arr[arr.length - 1].value : null;
+        const { slopePerDay: slope } = slopePerDay(arr.map(x => ({ value: x.value, measured_at: x.measured_at })));
+        if (!next[p.id]) continue;
+        next[p.id] = { ...next[p.id], latest, dailySlope: slope };
+      }
+      setBundles(computeAll(next));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendDays]);
 
-  const recomputeAll = (
-    state: Record<number, ParamBundle>,
+  async function fetchResultsByDays(tankId: string, paramIds: number[], days: number) {
+    const { data } = await supabase
+      .from('results').select('*')
+      .eq('tank_id', tankId)
+      .in('parameter_id', paramIds)
+      .gte('measured_at', new Date(Date.now() - days*24*60*60*1000).toISOString())
+      .order('measured_at', { ascending: true });
+    const byParam: Record<number, Reading[]> = {};
+    (data || []).forEach((r: any) => {
+      if (!byParam[r.parameter_id]) byParam[r.parameter_id] = [];
+      byParam[r.parameter_id].push(r as Reading);
+    });
+    return byParam;
+  }
+
+  function computeAll(
+    state?: Record<number, ParamBundle>,
     tankArg?: Tank | null,
     targetsArg?: TargetRow | null,
     productsArg?: Record<string, Product>
-  ) => {
+  ) {
+    const base = state ?? bundles;
     const t = tankArg ?? tank;
     const tgt = targetsArg ?? targets;
     const pmap = productsArg ?? productsById;
     const tl = t?.volume_liters ?? t?.volume_value ?? 0;
 
     const next: Record<number, ParamBundle> = {};
-    for (const [pidStr, pb0] of Object.entries(state)) {
+    for (const [pidStr, pb0] of Object.entries(base)) {
       const pid = Number(pidStr);
       const pb = { ...pb0 };
       const warnings: string[] = [];
       const working: string[] = [];
+      const pkey = pb.param.key as ParamKey;
 
       const prod = pb.productId ? pmap[pb.productId] : null;
       const potency = prod ? potencyPerMlPerL({
@@ -169,20 +192,20 @@ export default function CalculatorPage() {
       }
 
       const perMlTank = potency * tl;
-      const slope = pb.dailySlope || 0; // units/day; >0 rising
+      const slope = pb.dailySlope || 0; // units/day; negative means falling
       const latest = pb.latest;
-      const pkey = pb.param.key as ParamKey;
       const targetValue = tgt ? (tgt as any)[pkey] as number | null : null;
 
-      // Maintain dose math (absolute, not "extra"):
-      // maintain = max(0, currentDailyMl - slope / perMlTank)
+      // Maintain dose (absolute):
+      // maintain = currentDailyMl − slope / perMlTank
+      // If slope is negative (falling), maintain > currentDailyMl (i.e., add more).
       const maintain = Math.max(0, pb.currentDailyMl - (slope / perMlTank));
       const extra = Math.max(0, maintain - pb.currentDailyMl);
 
       // Correction now (below target)
       let correction: number | null = null;
       if (latest != null && targetValue != null) {
-        const delta = targetValue - latest;
+        const delta = targetValue - latest; // >0 => below target
         const absDelta = Math.abs(delta);
         if (delta > 0) {
           correction = doseMlForDelta(delta, potency, tl);
@@ -198,42 +221,36 @@ export default function CalculatorPage() {
         }
       }
 
-      // Working
+      // Working (explicit numbers)
       working.push(`Potency (units/ml/L) = delta_ref / (dose_ref_ml × volume_ref_L)`);
-      working.push(`Per-ml in tank = potency × tank_L = ${potency.toFixed(6)} × ${tl} = ${perMlTank.toFixed(6)} ${pb.param.unit}/ml`);
-      working.push(`Observed slope = ${(slope >= 0 ? '+' : '') + slope.toFixed(6)} ${pb.param.unit}/day`);
-      working.push(`Maintain dose = max(0, current − slope/per-ml-tank) = max(0, ${pb.currentDailyMl} − (${slope.toFixed(6)} / ${perMlTank.toFixed(6)})) = ${maintain.toFixed(6)} ml/day`);
+      working.push(`Per ml in your tank = potency × tank_L = ${potency.toFixed(6)} × ${tl} = ${perMlTank.toFixed(6)} ${pb.param.unit}/ml`);
+      working.push(`Observed slope over last ${trendDays} days = ${(slope >= 0 ? '+' : '') + slope.toFixed(6)} ${pb.param.unit}/day`);
+      working.push(`Maintain dose = current − slope / perMlTank = ${pb.currentDailyMl} − (${slope.toFixed(6)} / ${perMlTank.toFixed(6)}) = ${maintain.toFixed(6)} ml/day`);
       working.push(`Extra to add = max(0, maintain − current) = ${extra.toFixed(6)} ml/day`);
 
       next[pid] = { ...pb, maintainMlPerDay: maintain, extraMlPerDay: extra, correctionMl: correction, warnings, working };
     }
     return next;
-  };
+  }
 
-  // Recompute when tank/targets/products change
-  useEffect(() => {
-    setBundles(prev => recomputeAll(prev));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tank, targets, productsById]);
-
-  // Per-parameter refresh of Results
+  // Refresh button — re-pull last N days for that param
   const refreshParam = async (p: Parameter) => {
     if (!tank) return;
     const { data } = await supabase
       .from('results').select('*')
       .eq('tank_id', tank.id)
       .eq('parameter_id', p.id)
-      .gte('measured_at', new Date(Date.now() - 14*24*60*60*1000).toISOString())
+      .gte('measured_at', new Date(Date.now() - trendDays*24*60*60*1000).toISOString())
       .order('measured_at', { ascending: true });
     const arr = (data as any[] | null) || [];
     const latest = arr.length ? arr[arr.length - 1].value : null;
     const { slopePerDay: slope } = slopePerDay(arr.map(x => ({ value: x.value, measured_at: x.measured_at })));
-    setBundles(prev => recomputeAll({ ...prev, [p.id]: { ...prev[p.id], latest, dailySlope: slope } }));
+    setBundles(prev => computeAll({ ...prev, [p.id]: { ...prev[p.id], latest, dailySlope: slope } }));
   };
 
   const onSelectProduct = async (parameter_id: number, productId: string | null) => {
     if (!tank || !userId) return;
-    setBundles(prev => recomputeAll({ ...prev, [parameter_id]: { ...prev[parameter_id], productId } }));
+    setBundles(prev => computeAll({ ...prev, [parameter_id]: { ...prev[parameter_id], productId } }));
     if (productId) {
       await supabase.from('preferred_products').upsert({
         user_id: userId, tank_id: tank.id, parameter_id, product_id: productId
@@ -249,8 +266,20 @@ export default function CalculatorPage() {
     <main className="max-w-5xl mx-auto p-4 space-y-6">
       <h1 className="text-2xl font-semibold">Calculator</h1>
       <p className="text-sm text-gray-600">
-        Reads your tank size and targets from Dashboard, your product potency from Products, and your recent Results trend to compute the daily dose to hold steady.
+        Reads tank size & targets from Dashboard, potency from Products (for your selected product), and your Results trend to calculate the daily dose to hold steady.
       </p>
+
+      <section className="rounded-lg border p-4 flex items-center gap-3">
+        <h2 className="text-lg font-medium">Settings</h2>
+        <label className="text-sm">Trend window:&nbsp;
+          <select className="rounded-md border px-2 py-1 text-sm" value={trendDays} onChange={e => setTrendDays(Number(e.target.value) || 7)}>
+            <option value={3}>3 days</option>
+            <option value={7}>7 days</option>
+            <option value={14}>14 days</option>
+          </select>
+        </label>
+        <span className="text-xs text-gray-500">Shorter windows react faster; longer windows smooth noise.</span>
+      </section>
 
       <section className="rounded-lg border p-4">
         <h2 className="text-lg font-medium">Tank</h2>
@@ -286,7 +315,7 @@ export default function CalculatorPage() {
               <div className="text-sm space-y-1">
                 <div>Latest reading: {pb.latest ?? '—'} {p.unit}</div>
                 <div>Target: {targetValue ?? '—'} {p.unit}</div>
-                <div>Trend (Results): {pb.dailySlope > 0 ? '+' : ''}{pb.dailySlope.toFixed(3)} {p.unit}/day</div>
+                <div>Trend (last {trendDays}d): {pb.dailySlope > 0 ? '+' : ''}{pb.dailySlope.toFixed(3)} {p.unit}/day</div>
               </div>
 
               <div className="space-y-1">
@@ -299,9 +328,9 @@ export default function CalculatorPage() {
                     const v = Math.max(0, Number(e.target.value.replace(/[^\d.]/g, '')) || 0);
                     const key = localDoseKey(p.id, p.key);
                     if (key) localStorage.setItem(key, String(v));
-                    setBundles(prev => recomputeAll({ ...prev, [p.id]: { ...prev[p.id], currentDailyMl: v } }));
+                    setBundles(prev => computeAll({ ...prev, [p.id]: { ...prev[p.id], currentDailyMl: v } }));
                   }}
-                  placeholder="e.g. 20"
+                  placeholder="e.g. 30"
                 />
               </div>
 

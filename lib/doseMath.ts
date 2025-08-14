@@ -1,5 +1,5 @@
 /**
- * Deterministic dose/potency helpers.
+ * Deterministic dose/potency helpers for ReefBud.
  */
 
 export function potencyPerMlPerL(opts: {
@@ -43,15 +43,15 @@ export function slopePerDay(readings: { value: number; measured_at: string }[]):
 }
 
 export const nearThreshold = {
-  alk: 0.2,
-  ca: 10,
-  mg: 20,
+  alk: 0.2,   // dKH
+  ca: 10,     // ppm
+  mg: 20,     // ppm
 };
 
 export const maxSpike = {
-  alk: 1.0,
-  ca: 20,
-  mg: 50,
+  alk: 1.0,   // dKH/day
+  ca: 20,     // ppm/day
+  mg: 50,     // ppm/day
 };
 
 /** Suggest number of days to split a correction to respect max spike. */
