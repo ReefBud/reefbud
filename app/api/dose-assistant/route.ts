@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 import OpenAI from "openai";
 
 type Msg = { role: "system"|"user"|"assistant"; content: string };
@@ -12,11 +12,22 @@ export async function POST(req: NextRequest) {
     const messages: Msg[] = body?.messages ?? [];
     const facts: Facts = body?.facts ?? {};
 
-    // Authenticated Supabase server client
+    // Supabase server client with cookie adapter for App Router
+    const cookieStore = cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies }
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set(name: string, value: string, options: any) {
+            cookieStore.set({ name, value, ...options });
+          },
+          remove(name: string, options: any) {
+            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+          }
+        }
+      }
     );
 
     const { data: auth } = await supabase.auth.getUser();
@@ -53,8 +64,8 @@ export async function POST(req: NextRequest) {
     }
     // Ask for potency if missing
     const missingPotency: string[] = [];
-    for (const p of (ctx.prefs as any[])) {
-      const pr = p.products;
+    for (const p of ctx.prefs as any[]) {
+      const pr = (p as any).products;
       if (!pr?.dose_ref_ml || !pr?.delta_ref_value || !pr?.volume_ref_liters) {
         missingPotency.push(`For ${pr?.brand ?? "your"} ${pr?.name ?? "product"} (param id ${p.parameter_id}), provide a potency test like: "X ml raises Y units in Z liters".`);
       }
