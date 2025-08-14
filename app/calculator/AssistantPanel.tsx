@@ -9,7 +9,6 @@ export default function AssistantPanel() {
   const [facts, setFacts] = useState<any>({ currentDose: {} });
   const [busy, setBusy] = useState(false);
   const [used, setUsed] = useState<any>(null);
-  const [followUp, setFollowUp] = useState<string | null>(null);
 
   async function send() {
     if (!input.trim()) return;
@@ -29,11 +28,9 @@ export default function AssistantPanel() {
       return;
     }
     if (res.follow_up) {
-      setFollowUp(res.follow_up);
       setMessages(m => [...m, { role:"assistant", content: res.follow_up }]);
       return;
     }
-    setFollowUp(null);
     if (res.used) setUsed(res.used);
     if (res.reply) setMessages(m => [...m, { role:"assistant", content: res.reply }]);
   }

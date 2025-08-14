@@ -34,7 +34,6 @@ export async function POST(req: NextRequest) {
           brand, name,
           dose_ref_ml, delta_ref_value, volume_ref_liters, helper_text
         )
-      )
       `).eq("user_id", user.id),
     ]);
 
@@ -54,14 +53,16 @@ export async function POST(req: NextRequest) {
     }
     // Ask for potency if missing
     const missingPotency: string[] = [];
-    for (const p of ctx.prefs as any[]) {
+    for (const p of (ctx.prefs as any[])) {
       const pr = p.products;
       if (!pr?.dose_ref_ml || !pr?.delta_ref_value || !pr?.volume_ref_liters) {
         missingPotency.push(`For ${pr?.brand ?? "your"} ${pr?.name ?? "product"} (param id ${p.parameter_id}), provide a potency test like: "X ml raises Y units in Z liters".`);
       }
     }
     if (followups.length || missingPotency.length) {
-      return NextResponse.json({ follow_up: "I need a bit more info:\n" + [...followups, *missingPotency].map(s => "• " + s).join("\n") });
+      return NextResponse.json({
+        follow_up: "I need a bit more info:\n" + [...followups, ...missingPotency].map(s => "• " + s).join("\n")
+      });
     }
 
     // Build system prompt
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
     const used = {
       tank_liters: ctx.tank?.volume_liters,
       targets: ctx.targets,
-      prefs: ctx.prefs?.map((p:any) => ({ parameter_id: p.parameter_id, brand: p.products?.brand, name: p.products?.name, dose_ref_ml: p.products?.dose_ref_ml, delta_ref_value: p.products?.delta_ref_value, volume_ref_liters: p.products?.volume_ref_liters })),
+      prefs: (ctx.prefs as any[])?.map((p:any) => ({ parameter_id: p.parameter_id, brand: p.products?.brand, name: p.products?.name, dose_ref_ml: p.products?.dose_ref_ml, delta_ref_value: p.products?.delta_ref_value, volume_ref_liters: p.products?.volume_ref_liters })),
       facts: ctx.facts,
     };
 
