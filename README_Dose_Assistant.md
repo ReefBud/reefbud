@@ -1,18 +1,18 @@
-# ReefBud Dose Assistant (Chat) — SSR cookie + TS fix
+# ReefBud Dose Assistant (Chat) — Drop-in Addon (SSR + TS fixes)
 
-Files:
-- app/api/dose-assistant/route.ts
-- app/calculator/AssistantPanel.tsx
-- app/assistant/page.tsx
-- sql/2025-08-14_regimes_current_doses.sql
+Copy these files into your project keeping paths the same, then:
 
-Install:
-  npm i @supabase/ssr openai
+```bash
+npm i @supabase/ssr openai
+```
 
-Env (.env.local):
-  OPENAI_API_KEY=sk-...
-  OPENAI_MODEL=gpt-4o-mini
-  NEXT_PUBLIC_SUPABASE_URL=...
-  NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+`.env.local`:
+```
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
 
-Go to /assistant to test.
+Visit `/assistant`.
+Generated: 2025-08-14T13:37:58.215013Z

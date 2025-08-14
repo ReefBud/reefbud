@@ -9,10 +9,11 @@ export default function AssistantPanel() {
   const [facts, setFacts] = useState<any>({ currentDose: {} });
   const [busy, setBusy] = useState(false);
   const [used, setUsed] = useState<any>(null);
+  const [followUp, setFollowUp] = useState<string | null>(null);
 
   async function send() {
     if (!input.trim()) return;
-    const nextMsgs = [...messages, { role:"user", content: input }];
+    const nextMsgs: Msg[] = [...messages, { role: "user" as const, content: input }];
     setMessages(nextMsgs);
     setInput("");
     setBusy(true);
@@ -23,16 +24,18 @@ export default function AssistantPanel() {
     }).then(r => r.json()).catch(err => ({ error: err?.message || "Network error" }));
     setBusy(false);
 
-    if (res.error) {
-      setMessages(m => [...m, { role:"assistant", content: "Error: " + res.error }]);
+    if ((res as any).error) {
+      setMessages(m => [...m, { role: "assistant", content: "Error: " + (res as any).error }]);
       return;
     }
-    if (res.follow_up) {
-      setMessages(m => [...m, { role:"assistant", content: res.follow_up }]);
+    if ((res as any).follow_up) {
+      setFollowUp((res as any).follow_up as string);
+      setMessages(m => [...m, { role: "assistant", content: (res as any).follow_up as string }]);
       return;
     }
-    if (res.used) setUsed(res.used);
-    if (res.reply) setMessages(m => [...m, { role:"assistant", content: res.reply }]);
+    setFollowUp(null);
+    if ((res as any).used) setUsed((res as any).used);
+    if ((res as any).reply) setMessages(m => [...m, { role: "assistant", content: (res as any).reply as string }]);
   }
 
   return (
