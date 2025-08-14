@@ -12,21 +12,20 @@ export async function POST(req: NextRequest) {
     const messages: Msg[] = body?.messages ?? [];
     const facts: Facts = body?.facts ?? {};
 
-    // Supabase server client with cookie adapter for App Router
     const cookieStore = cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name: string) { return cookieStore.get(name)?.value; },
-          set(name: string, value: string, options: any) {
+          get: (name: string) => cookieStore.get(name)?.value,
+          set: (name: string, value: string, options: any) => {
             cookieStore.set({ name, value, ...options });
           },
-          remove(name: string, options: any) {
+          remove: (name: string, options: any) => {
             cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-          }
-        }
+          },
+        },
       }
     );
 
@@ -65,7 +64,7 @@ export async function POST(req: NextRequest) {
     // Ask for potency if missing
     const missingPotency: string[] = [];
     for (const p of ctx.prefs as any[]) {
-      const pr = (p as any).products;
+      const pr = p.products;
       if (!pr?.dose_ref_ml || !pr?.delta_ref_value || !pr?.volume_ref_liters) {
         missingPotency.push(`For ${pr?.brand ?? "your"} ${pr?.name ?? "product"} (param id ${p.parameter_id}), provide a potency test like: "X ml raises Y units in Z liters".`);
       }
@@ -77,7 +76,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Build system prompt
-    const t = ctx.targets ?? {};
+    const t: any = (ctx.targets as any) ?? {};
     const sys = [
       "You are a reef dosing assistant. Be precise and conservative.",
       "Use the user's targets, recent results (last 7 days), product potencies, and tank volume.",
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
       "dose_ml_needed = desired_change / u_per_ml_tank",
       "",
       `Tank volume (L): ${ctx.tank?.volume_liters}`,
-      `Targets: alk=${t.alk ?? "?"} dKH, ca=${t.ca ?? "?"} ppm, mg=${t.mg ?? "?"} ppm, po4=${t.po4 ?? "?"} ppm, no3=${t.no3 ?? "?"} ppm, salinity=${t.salinity ?? "?"} ppt`,
+      `Targets: alk=${t?.alk ?? "?"} dKH, ca=${t?.ca ?? "?"} ppm, mg=${t?.mg ?? "?"} ppm, po4=${t?.po4 ?? "?"} ppm, no3=${t?.no3 ?? "?"} ppm, salinity=${t?.salinity ?? "?"} ppt`,
       "Preferred products with potency (if available):"
     ].join("\n");
 
