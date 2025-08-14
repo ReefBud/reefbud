@@ -12,28 +12,26 @@ type ApiReply = {
   error?: string;
 };
 
+// Keep doses optional and only include keys that have valid numbers
+type Facts = { currentDose: Partial<Record<"alk" | "ca" | "mg", number>> };
+
 export default function AssistantPanel() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [used, setUsed] = useState<any>(null);
-  const [facts, setFacts] = useState<{ currentDose: Record<string, number> }>({
-    currentDose: {},
-  });
+  const [facts, setFacts] = useState<Facts>({ currentDose: {} });
 
   async function send() {
     if (!input.trim()) return;
 
-    // Keep the literal type for role, do not let it widen to string
-    const nextMsgs: Msg[] = [
-      ...messages,
-      { role: "user" as const, content: input },
-    ];
+    // Keep the literal type for role so it does not widen to string
+    const nextMsgs: Msg[] = [...messages, { role: "user" as const, content: input }];
     setMessages(nextMsgs);
     setInput("");
     setBusy(true);
 
-    let res: ApiReply;
+    let res: ApiReply = {};
     try {
       const r = await fetch("/api/dose-assistant", {
         method: "POST",
@@ -48,48 +46,41 @@ export default function AssistantPanel() {
     }
 
     if (res.error) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: `Error: ${res.error}` },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", content: `Error: ${res.error}` }]);
       return;
     }
 
     if (res.follow_up) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: res.follow_up as string },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", content: res.follow_up as string }]);
       return;
     }
 
     if (res.used) setUsed(res.used);
     if (res.reply) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: res.reply as string },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", content: res.reply as string }]);
     }
   }
 
   function setDose(key: "alk" | "ca" | "mg", value: string) {
     const v = value.trim();
-    const num =
-    v === "" ? NaN : Number.isFinite(Number(v)) ? Number(v) : NaN;
-    setFacts((f) => ({
-      ...f,
-      currentDose: {
-        ...f.currentDose,
-        [key]: Number.isNaN(num) ? undefined : num,
-      },
-    }));
+    const num = v === "" ? NaN : Number(v);
+
+    // Only store valid numbers; remove the key if invalid/empty
+    setFacts((prev) => {
+      const next = { ...prev.currentDose };
+      if (!Number.isFinite(num)) {
+        delete next[key];
+      } else {
+        next[key] = num;
+      }
+      return { currentDose: next };
+    });
   }
 
   return (
     <div className="rounded-2xl border p-4 space-y-3">
     <div className="text-sm opacity-70">
-    Ask for a dosing plan. The assistant will use your targets, recent
-    results, preferred products and potencies, and your tank volume. If
+    Ask for a dosing plan. The assistant will use your targets, recent results, preferred products and potencies, and your tank volume. If
     something is missing it will ask you.
     </div>
 
@@ -118,10 +109,7 @@ export default function AssistantPanel() {
     {/* Transcript */}
     <div className="h-56 overflow-auto space-y-2 border rounded p-2 bg-gray-50">
     {messages.map((m, i) => (
-      <div
-      key={i}
-      className={m.role === "assistant" ? "text-blue-900" : "text-gray-900"}
-      >
+      <div key={i} className={m.role === "assistant" ? "text-blue-900" : "text-gray-900"}>
       <b>{m.role === "assistant" ? "Assistant" : "You"}:</b> {m.content}
       </div>
     ))}
@@ -135,11 +123,7 @@ export default function AssistantPanel() {
     onChange={(e) => setInput(e.target.value)}
     placeholder="Describe your latest readings or ask for a plan..."
     />
-    <button
-    className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60"
-    disabled={busy}
-    onClick={send}
-    >
+    <button className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60" disabled={busy} onClick={send}>
     {busy ? "..." : "Send"}
     </button>
     </div>
@@ -148,9 +132,7 @@ export default function AssistantPanel() {
     {used && (
       <details className="text-xs">
       <summary>Inputs used</summary>
-      <pre className="whitespace-pre-wrap">
-      {JSON.stringify(used, null, 2)}
-      </pre>
+      <pre className="whitespace-pre-wrap">{JSON.stringify(used, null, 2)}</pre>
       </details>
     )}
     </div>
