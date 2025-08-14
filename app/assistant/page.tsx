@@ -1,5 +1,5 @@
 // app/assistant/page.tsx
-import AssistantPanel from "@/app/calculator/AssistantPanel";
+import AssistantPanel from "../calculator/AssistantPanel";
 
 export default function AssistantPage() {
   return (

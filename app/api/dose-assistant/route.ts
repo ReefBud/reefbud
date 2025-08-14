@@ -20,21 +20,29 @@ export async function POST(req: NextRequest) {
     const { data: { user } = { user: null } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
+    // Tank (first tank)
+    const { data: tanks } = await supabase
+      .from("tanks")
+      .select("id,name,volume_liters,volume_value")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const tank = (tanks ?? [])[0] ?? null;
+    if (!tank) {
+      return NextResponse.json({ follow_up: "No tank found. Please create a tank (name + volume) on your Dashboard first." });
+    }
+
+    const tank_liters: number | null = (tank?.volume_liters ?? tank?.volume_value ?? null) as number | null;
     const sinceISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [tanksRes, targetsRes, resultsRes, prefsRes] = await Promise.all([
-      supabase.from("tanks")
-        .select("id,name,volume_liters,volume_value")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: true })
-        .limit(1),
+    const [targetsRes, resultsRes, prefsRes] = await Promise.all([
       supabase.from("targets")
         .select("alk,ca,mg,po4,no3,salinity")
         .eq("user_id", user.id)
         .maybeSingle(),
       supabase.from("results")
         .select("parameter_id,value,measured_at")
-        .eq("user_id", user.id)
+        .eq("tank_id", tank.id)
         .gte("measured_at", sinceISO)
         .order("measured_at", { ascending: true }),
       supabase.from("preferred_products").select(`
@@ -47,16 +55,15 @@ export async function POST(req: NextRequest) {
           volume_ref_liters,
           helper_text
         )
-      `).eq("user_id", user.id),
+      `).eq("user_id", user.id).eq("tank_id", tank.id),
     ]);
 
-    const tank = (tanksRes?.data ?? [])[0] ?? null;
     const targets = targetsRes?.data ?? null;
     const results = resultsRes?.data ?? [];
     const prefs = prefsRes?.data ?? [];
 
+    // Ask for missing critical info
     const followups: string[] = [];
-    const tank_liters = tank?.volume_liters ?? tank?.volume_value ?? null;
     if (!tank_liters) followups.push("What is your tank volume in liters?");
     for (const k of ["alk", "ca", "mg"] as const) {
       if (facts?.currentDose?.[k] == null) {
@@ -77,6 +84,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Build compact system prompt
     const t: any = targets ?? {};
     const header = [
       "You are a reef dosing assistant. Be precise and conservative.",
