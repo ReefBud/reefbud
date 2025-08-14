@@ -12,7 +12,6 @@ type ApiReply = {
   error?: string;
 };
 
-// Keep doses optional and only include keys that have valid numbers
 type Facts = { currentDose: Partial<Record<"alk" | "ca" | "mg", number>> };
 
 export default function AssistantPanel() {
@@ -25,7 +24,6 @@ export default function AssistantPanel() {
   async function send() {
     if (!input.trim()) return;
 
-    // Keep the literal type for role so it does not widen to string
     const nextMsgs: Msg[] = [...messages, { role: "user" as const, content: input }];
     setMessages(nextMsgs);
     setInput("");
@@ -65,76 +63,48 @@ export default function AssistantPanel() {
     const v = value.trim();
     const num = v === "" ? NaN : Number(v);
 
-    // Only store valid numbers; remove the key if invalid/empty
     setFacts((prev) => {
       const next = { ...prev.currentDose };
-      if (!Number.isFinite(num)) {
-        delete next[key];
-      } else {
-        next[key] = num;
-      }
+      if (!Number.isFinite(num)) delete next[key];
+      else next[key] = num;
       return { currentDose: next };
     });
   }
 
   return (
     <div className="rounded-2xl border p-4 space-y-3">
-    <div className="text-sm opacity-70">
-    Ask for a dosing plan. The assistant will use your targets, recent results, preferred products and potencies, and your tank volume. If
-    something is missing it will ask you.
-    </div>
-
-    {/* Quick inputs for current ml/day so the API does not need to ask */}
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-    <input
-    className="w-full rounded border px-2 py-1"
-    placeholder="ALK ml/day"
-    inputMode="decimal"
-    onChange={(e) => setDose("alk", e.target.value)}
-    />
-    <input
-    className="w-full rounded border px-2 py-1"
-    placeholder="CA ml/day"
-    inputMode="decimal"
-    onChange={(e) => setDose("ca", e.target.value)}
-    />
-    <input
-    className="w-full rounded border px-2 py-1"
-    placeholder="MG ml/day"
-    inputMode="decimal"
-    onChange={(e) => setDose("mg", e.target.value)}
-    />
-    </div>
-
-    {/* Transcript */}
-    <div className="h-56 overflow-auto space-y-2 border rounded p-2 bg-gray-50">
-    {messages.map((m, i) => (
-      <div key={i} className={m.role === "assistant" ? "text-blue-900" : "text-gray-900"}>
-      <b>{m.role === "assistant" ? "Assistant" : "You"}:</b> {m.content}
+      <div className="text-sm opacity-70">
+        Ask for a dosing plan. The assistant will use your targets, recent results, preferred products and potencies, and your tank volume. If
+        something is missing it will ask you.
       </div>
-    ))}
-    </div>
 
-    {/* Composer */}
-    <div className="flex gap-2">
-    <input
-    className="flex-1 rounded border px-2 py-1"
-    value={input}
-    onChange={(e) => setInput(e.target.value)}
-    placeholder="Describe your latest readings or ask for a plan..."
-    />
-    <button className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60" disabled={busy} onClick={send}>
-    {busy ? "..." : "Send"}
-    </button>
-    </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <input className="w-full rounded border px-2 py-1" placeholder="ALK ml/day" inputMode="decimal" onChange={(e) => setDose("alk", e.target.value)} />
+        <input className="w-full rounded border px-2 py-1" placeholder="CA ml/day" inputMode="decimal" onChange={(e) => setDose("ca", e.target.value)} />
+        <input className="w-full rounded border px-2 py-1" placeholder="MG ml/day" inputMode="decimal" onChange={(e) => setDose("mg", e.target.value)} />
+      </div>
 
-    {/* Inputs used (diagnostics) */}
-    {used && (
-      <details className="text-xs">
-      <summary>Inputs used</summary>
-      <pre className="whitespace-pre-wrap">{JSON.stringify(used, null, 2)}</pre>
-      </details>
-    )}
+      <div className="h-56 overflow-auto space-y-2 border rounded p-2 bg-gray-50">
+        {messages.map((m, i) => (
+          <div key={i} className={m.role === "assistant" ? "text-blue-900" : "text-gray-900"}>
+            <b>{m.role === "assistant" ? "Assistant" : "You"}:</b> {m.content}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <input className="flex-1 rounded border px-2 py-1" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Describe your latest readings or ask for a plan..." />
+        <button className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60" disabled={busy} onClick={send}>
+          {busy ? "..." : "Send"}
+        </button>
+      </div>
+
+      {used && (
+        <details className="text-xs">
+          <summary>Inputs used</summary>
+          <pre className="whitespace-pre-wrap">{JSON.stringify(used, null, 2)}</pre>
+        </details>
+      )}
     </div>
   );
 }
