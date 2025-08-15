@@ -16,29 +16,34 @@ export async function POST(req: NextRequest) {
     const facts: Facts = (body?.facts ?? {}) as Facts;
 
     const supabase = createRouteHandlerClient({ cookies }) as any;
-
     const { data: { user } = { user: null } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+    if (!user) {
+      return NextResponse.json({
+        follow_up:
+          "You’re not signed in. I can still help — please tell me: tank volume (L), your current ml/day for Alk, Ca, Mg, and the potency for your product(s): X ml raises Y units in Z liters.",
+      });
+    }
 
     const sinceISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [tanksRes, targetsRes, resultsRes, prefsRes] = await Promise.all([
-      supabase.from("tanks")
-        .select("id,name,volume_liters,volume_value")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: true })
-        .limit(1),
+    const { data: tanks } = await supabase
+      .from("tanks")
+      .select("id,name,volume_liters,volume_value")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    const tank = (tanks ?? [])[0] ?? null;
+
+    const [targetsRes, prefsRes, resultsRes] = await Promise.all([
       supabase.from("targets")
         .select("alk,ca,mg,po4,no3,salinity")
         .eq("user_id", user.id)
         .maybeSingle(),
-      supabase.from("results")
-        .select("parameter_id,value,measured_at")
-        .eq("user_id", user.id)
-        .gte("measured_at", sinceISO)
-        .order("measured_at", { ascending: true }),
       supabase.from("preferred_products").select(`
         parameter_id,
+        product_id,
         products:product_id (
           brand,
           name,
@@ -47,13 +52,23 @@ export async function POST(req: NextRequest) {
           volume_ref_liters,
           helper_text
         )
-      `).eq("user_id", user.id),
+      `).eq("user_id", user.id).eq("tank_id", tank?.id ?? -1),
+      tank
+        ? supabase.from("results")
+            .select("parameter_id,value,measured_at")
+            .eq("tank_id", tank.id)
+            .gte("measured_at", sinceISO)
+            .order("measured_at", { ascending: true })
+        : supabase.from("results")
+            .select("parameter_id,value,measured_at")
+            .eq("user_id", user.id)
+            .gte("measured_at", sinceISO)
+            .order("measured_at", { ascending: true }),
     ]);
 
-    const tank = (tanksRes?.data ?? [])[0] ?? null;
     const targets = targetsRes?.data ?? null;
-    const results = resultsRes?.data ?? [];
     const prefs = prefsRes?.data ?? [];
+    const results = resultsRes?.data ?? [];
 
     const followups: string[] = [];
     const tank_liters = tank?.volume_liters ?? tank?.volume_value ?? null;
