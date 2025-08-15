@@ -1,16 +1,19 @@
 // app/calculator/page.tsx
 "use client";
 
-import AssistantPanel from "./AssistantPanel";
+import dynamic from "next/dynamic";
+
+const CalculatorForm = dynamic(() => import("./CalculatorForm"), { ssr: false });
 
 export default function CalculatorPage() {
   return (
-    <main className="max-w-3xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-semibold">Calculator</h1>
-      <div style={{border:'2px solid #3b82f6', padding: 8, background: '#f0f6ff'}}>
-        <p className="mb-2">ChatGPT dosing calculator</p>
-        <AssistantPanel />
-      </div>
+    <main className="max-w-4xl mx-auto p-4 space-y-4">
+    <h1 className="text-2xl font-semibold">Dosing Calculator</h1>
+    <p className="text-sm text-muted-foreground">
+    Enter your tank size, current daily doses, potency of your products, and current vs target parameters.
+    This tool will suggest the daily dosing amount to reach your targets.
+    </p>
+    <CalculatorForm />
     </main>
   );
 }
