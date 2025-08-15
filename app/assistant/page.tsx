@@ -1,4 +1,3 @@
-// app/assistant/page.tsx
 export default function AssistantPage() {
   return (
     <main className="max-w-3xl mx-auto p-4 space-y-4">
