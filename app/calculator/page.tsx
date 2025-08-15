@@ -23,8 +23,8 @@ type PreferredPotency = {
   name?: string | null;
 };
 
-function safeNum(n: any): number | undefined {
-  const v = typeof n === "string" ? parseFloat(n) : n;
+function safeNum(n: unknown): number | undefined {
+  const v = typeof n === "string" ? parseFloat(n) : (n as number);
   return Number.isFinite(v) ? v : undefined;
 }
 function round2(n: number | undefined): string {
@@ -49,25 +49,30 @@ export default function CalculatorPage() {
 
   useEffect(() => {
     const compute = () => {
-      const paramKeys: Array<keyof Doses> = ["alk", "ca", "mg"];
+      const keys: Array<keyof Doses> = ["alk", "ca", "mg"];
       const req: Doses = {};
       const delta: Doses = {};
 
-      for (const k of paramKeys) {
+      for (const k of keys) {
         const currDose = currentDose[k] ?? 0;
-        const currVal = current[k] ?? undefined;
-        const targVal = target[k] ?? undefined;
+        const currVal = current[k];
+        const targVal = target[k];
         const perL = potencies[k].perLiter;
         const perT = potencies[k].perTank;
 
-        let incPerMlTank: number | undefined;
+        let incPerMlTank: number | undefined = undefined;
         if (mode === "perLiter") {
           if (perL !== undefined && tankLiters !== undefined) incPerMlTank = perL * tankLiters;
         } else {
           if (perT !== undefined) incPerMlTank = perT;
         }
 
-        if (incPerMlTank !== undefined && incPerMlTank !== 0 && currVal !== undefined && targVal !== undefined) {
+        if (
+          incPerMlTank !== undefined &&
+          incPerMlTank !== 0 &&
+          currVal !== undefined &&
+          targVal !== undefined
+        ) {
           const needed = currDose + (targVal - currVal) / incPerMlTank;
           req[k] = needed;
           delta[k] = needed - currDose;
@@ -80,13 +85,15 @@ export default function CalculatorPage() {
       setRequiredDose(req);
       setDeltaDose(delta);
     };
+
     compute();
   }, [tankLiters, currentDose, potencies, current, target, mode]);
 
   async function autofillFromPreferred() {
     try {
       setLoadingPref(true);
-      // Use most recent tank to prefill volume
+
+      // Prefill tank size from latest tank
       const { data: tanks, error: tErr } = await supabase
       .from("tanks")
       .select("id, name, volume_liters, volume_value")
@@ -94,7 +101,7 @@ export default function CalculatorPage() {
       .limit(1);
       if (tErr) throw tErr;
 
-      const tank = tanks?.[0] || null;
+      const tank = tanks?.[0] ?? null;
       if (tank) {
         const vol =
         typeof tank.volume_liters === "number"
@@ -108,28 +115,30 @@ export default function CalculatorPage() {
       // Pull preferred products and compute per-liter potency
       const { data: prefs, error: pErr } = await supabase
       .from("preferred_products")
-      .select("parameter_key, products:product_id (brand, name, dose_ref_ml, delta_ref_value, volume_ref_liters)")
+      .select(
+        "parameter_key, products:product_id (brand, name, dose_ref_ml, delta_ref_value, volume_ref_liters)"
+      )
       .in("parameter_key", ["alk", "ca", "mg"])
       .limit(10);
       if (pErr) throw pErr;
 
-      const out: Array<PreferredPotency> = [];
-      for (const row of prefs || []) {
-        const pk = row.parameter_key as "alk" | "ca" | "mg";
-        const prod: any = (row as any).products || {};
-        const doseRef = Number(prod?.dose_ref_ml) || NaN;
-        const deltaRef = Number(prod?.delta_ref_value) || NaN;
-        const volRef = Number(prod?.volume_ref_liters) || NaN;
-        const perLiter =
-        Number.isFinite(doseRef) && doseRef > 0 && Number.isFinite(deltaRef) && Number.isFinite(volRef) && volRef > 0
-        ? (deltaRef / doseRef) / volRef
-        : null;
-        out.push({ parameter_key: pk, perLiter, brand: prod?.brand ?? null, name: prod?.name ?? null });
-      }
-
       const next: Potencies = { alk: {}, ca: {}, mg: {} };
-      for (const p of out) {
-        if (p.perLiter != null) next[p.parameter_key].perLiter = p.perLiter;
+      for (const row of prefs || []) {
+        const pk = (row as any).parameter_key as "alk" | "ca" | "mg";
+        const prod: any = (row as any).products ?? {};
+        const doseRef = Number(prod?.dose_ref_ml);
+        const deltaRef = Number(prod?.delta_ref_value);
+        const volRef = Number(prod?.volume_ref_liters);
+        if (
+          Number.isFinite(doseRef) &&
+          doseRef > 0 &&
+          Number.isFinite(deltaRef) &&
+          Number.isFinite(volRef) &&
+          volRef > 0
+        ) {
+          const perLiter = (deltaRef / doseRef) / volRef;
+          next[pk].perLiter = perLiter;
+        }
       }
       setPotencies((old) => ({ ...old, ...next }));
     } catch (e) {
@@ -167,11 +176,21 @@ export default function CalculatorPage() {
     <label className="block text-sm text-muted-foreground mb-1">Potency mode</label>
     <div className="flex gap-3 flex-wrap">
     <label className="flex items-center gap-2">
-    <input type="radio" name="mode" checked={mode === "perLiter"} onChange={() => setMode("perLiter")} />
+    <input
+    type="radio"
+    name="mode"
+    checked={mode === "perLiter"}
+    onChange={() => setMode("perLiter")}
+    />
     <span>Values are per ml per litre</span>
     </label>
     <label className="flex items-center gap-2">
-    <input type="radio" name="mode" checked={mode === "perTank"} onChange={() => setMode("perTank")} />
+    <input
+    type="radio"
+    name="mode"
+    checked={mode === "perTank"}
+    onChange={() => setMode("perTank")}
+    />
     <span>Values are per ml for whole tank</span>
     </label>
     </div>
@@ -191,14 +210,14 @@ export default function CalculatorPage() {
     <section className="rounded-2xl border p-4">
     <h2 className="text-lg font-semibold mb-3">Current Daily Dose (ml/day)</h2>
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-    {["alk", "ca", "mg"].map((k) => (
+    {(["alk", "ca", "mg"] as const).map((k) => (
       <div key={k}>
       <label className="block text-sm text-muted-foreground mb-1">{k.toUpperCase()}</label>
       <input
       type="number"
       inputMode="decimal"
       className="w-full border rounded-lg p-2 bg-background"
-      value={currentDose[k as keyof Doses] ?? ""}
+      value={currentDose[k] ?? ""}
       onChange={(e) => setCurrentDose({ ...currentDose, [k]: safeNum(e.target.value) })}
       placeholder="e.g. 30"
       />
@@ -224,7 +243,9 @@ export default function CalculatorPage() {
       inputMode="decimal"
       className="w-full border rounded-lg p-2 bg-background"
       value={potencies[k].perLiter ?? ""}
-      onChange={(e) => setPotencies({ ...potencies, [k]: { ...potencies[k], perLiter: safeNum(e.target.value) } })}
+      onChange={(e) =>
+        setPotencies({ ...potencies, [k]: { ...potencies[k], perLiter: safeNum(e.target.value) } })
+      }
       placeholder={k === "alk" ? "dKH/L per ml" : "ppm/L per ml"}
       />
       </div>
@@ -235,7 +256,9 @@ export default function CalculatorPage() {
       inputMode="decimal"
       className="w-full border rounded-lg p-2 bg-background"
       value={potencies[k].perTank ?? ""}
-      onChange={(e) => setPotencies({ ...potencies, [k]: { ...potencies[k], perTank: safeNum(e.target.value) } })}
+      onChange={(e) =>
+        setPotencies({ ...potencies, [k]: { ...potencies[k], perTank: safeNum(e.target.value) } })
+      }
       placeholder={k === "alk" ? "dKH per ml" : "ppm per ml"}
       />
       </div>
@@ -320,4 +343,22 @@ export default function CalculatorPage() {
     </section>
 
     {/* Results */}
-    <section c
+    <section className="rounded-2xl border p-4">
+    <h2 className="text-lg font-semibold mb-3">Recommended Daily Dose</h2>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {(["alk", "ca", "mg"] as const).map((k) => (
+      <div key={k} className="border rounded-xl p-3">
+      <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
+      <div className="text-2xl font-semibold">{round2(requiredDose[k]) || "-"} ml</div>
+      <div className="text-xs mt-1">Change: {round2(deltaDose[k]) || "-"} ml/day</div>
+      </div>
+    ))}
+    </div>
+    <p className="text-xs text-muted-foreground mt-3">
+    Formula: required = current_dose + (target - current) ÷ increase_per_ml_for_tank.
+    If potency mode is per litre, increase_per_ml_for_tank = potency_per_ml_per_litre × tank_litres.
+    </p>
+    </section>
+    </main>
+  );
+}
