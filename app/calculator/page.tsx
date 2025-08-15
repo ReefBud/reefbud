@@ -1,4 +1,3 @@
-
 // app/calculator/page.tsx
 "use client";
 
@@ -10,9 +9,9 @@ type Params = { alk?: number; ca?: number; mg?: number };
 type Targets = Params;
 
 type ProductPotencyRaw = {
-  dose_ml?: number;
-  delta_value?: number;
-  volume_liters?: number;
+  dose_ml?: number;        // e.g., 30 ml
+  delta_value?: number;    // e.g., raises 2.2 (dKH/ppm)
+  volume_liters?: number;  // e.g., in 35 L tank
   brand?: string | null;
   name?: string | null;
 };
@@ -33,7 +32,7 @@ export default function CalculatorPage() {
   const [current, setCurrent] = useState<Params>({});
   const [target, setTarget] = useState<Targets>({});
 
-  // Product raw entries by parameter
+  // Product raw entries by parameter (pulled from Products tab)
   const [product, setProduct] = useState<{[K in 'alk'|'ca'|'mg']?: ProductPotencyRaw}>({});
 
   // Derived
@@ -42,6 +41,8 @@ export default function CalculatorPage() {
   const [slopesPerDay, setSlopesPerDay] = useState<{[K in 'alk'|'ca'|'mg']?: number}>({});
   const [loading, setLoading] = useState(false);
 
+  // Helper: compute increase per 1 ml for the user's tank using exact product fields
+  // incPerMlTank = (delta_ref_value / dose_ref_ml) * (reference_volume / tank_liters)
   function incPerMlTankFor(param: keyof Doses): number | undefined {
     const pr = product[param as 'alk'|'ca'|'mg'];
     if (!pr || !tankLiters) return undefined;
@@ -51,6 +52,7 @@ export default function CalculatorPage() {
     return (d / D) * (Vref / V);
   }
 
+  // Auto-load: tank, targets, products, current readings + consumption slope
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -59,7 +61,7 @@ export default function CalculatorPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        // Latest tank
+        // Latest tank (prefill volume)
         const { data: tanks } = await supabase
           .from("tanks")
           .select("id, volume_liters, volume_value")
@@ -74,7 +76,7 @@ export default function CalculatorPage() {
           if (vol && !cancelled) setTankLiters(vol);
         }
 
-        // Targets
+        // Targets (dashboard)
         const { data: tgt } = await supabase
           .from("targets")
           .select("alk, ca, mg")
@@ -88,7 +90,7 @@ export default function CalculatorPage() {
           });
         }
 
-        // Products preferred
+        // Products: preferred first
         const nextProducts: any = {};
         const { data: prefs } = await supabase
           .from("preferred_products")
@@ -110,7 +112,7 @@ export default function CalculatorPage() {
             }
           }
         }
-        // Fallback: latest user product
+        // Fallback: most recent user product per parameter
         const unresolved = (["alk","ca","mg"] as const).filter(k => !nextProducts[k]);
         if (unresolved.length) {
           const { data: plist } = await supabase.from("parameters").select("id, key").in("key", unresolved as any);
@@ -140,7 +142,7 @@ export default function CalculatorPage() {
         }
         if (!cancelled) setProduct(prev => ({ ...prev, ...nextProducts }));
 
-        // Current + slope (1..7 readings)
+        // Current reading (latest) and consumption slope using up to last 7 readings
         if (tankId) {
           const { data: plist2 } = await supabase.from("parameters").select("id, key").in("key", ["alk","ca","mg"]);
           const idByKey2 = new Map<string, number>();
@@ -163,9 +165,10 @@ export default function CalculatorPage() {
             const vals = (rows ?? [])
               .map(r => ({ v: Number((r as any).value), t: new Date((r as any).measured_at).getTime() }))
               .filter(r => Number.isFinite(r.v) && Number.isFinite(r.t));
-
             if (vals.length) {
+              // current = latest reading
               curr[key] = Math.round(vals[0].v * 100) / 100;
+              // slope even with 2 points
               if (vals.length >= 2) {
                 const t0 = vals[vals.length - 1].t;
                 const pts = vals.map(p => ({ x: (p.t - t0) / (1000*60*60*24), y: p.v }));
@@ -195,24 +198,29 @@ export default function CalculatorPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // Compute recommended dose (TOTAL ml/day):
+  // - Hold adjustment offsets any daily drop (negative slope) using incPerMlTank
+  // - Gentle correction toward target over ~7 days if not trending upward
+  // - NEVER recommend a large reduction just because you're above target; wait for 3–5 days trend
   useEffect(() => {
     const keys: Array<keyof Doses> = ["alk", "ca", "mg"];
     const req: Doses = {};
     const delta: Doses = {};
 
     const horizonDays = 7;
-    const epsilon = 0.01;
+    const epsilon = 0.01; // ~flat if |slope| < 0.01 per day
 
     for (const k of keys) {
       const currDose = currentDose[k] ?? 0;
       const currVal = current[k];
       const targVal = target[k];
-      const slope = slopesPerDay[k as 'alk'|'ca'|'mg'] ?? 0;
+      const slope = slopesPerDay[k as 'alk'|'ca'|'mg'] ?? 0; // +rising, -dropping
 
       const incPerMl = incPerMlTankFor(k);
       if (incPerMl && incPerMl > 0) {
         let holdAdjust = 0;
         if (slope < -epsilon) {
+          // Add enough to cancel the drop
           holdAdjust = Math.abs(slope) / incPerMl;
         }
 
@@ -220,6 +228,7 @@ export default function CalculatorPage() {
         if (targVal !== undefined && currVal !== undefined) {
           const deficit = targVal - currVal;
           if (deficit > 0 && slope <= epsilon) {
+            // Spread the catch-up across ~7 days
             correctionAdjust = (deficit / incPerMl) / horizonDays;
           }
         }
@@ -237,6 +246,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay]);
 
+  // UI
   return (
     <main className="max-w-4xl mx-auto p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Dosing Calculator</h1>
@@ -245,6 +255,7 @@ export default function CalculatorPage() {
         Targets come from your dashboard. Currents are from your latest readings; daily consumption is computed from up to the last 7 readings.
       </p>
 
+      {/* Tank */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-2">Tank</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -256,12 +267,13 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={tankLiters ?? ""}
               onChange={(e) => setTankLiters(safeNum(e.target.value))}
-              placeholder="e.g. 35"
+              placeholder="e.g. 110"
             />
           </div>
         </div>
       </section>
 
+      {/* Current dose */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-3">Current Daily Dose (ml/day)</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -274,13 +286,14 @@ export default function CalculatorPage() {
                 className="w-full border rounded-lg p-2 bg-background"
                 value={currentDose[k as keyof Doses] ?? ""}
                 onChange={(e) => setCurrentDose({ ...currentDose, [k]: safeNum(e.target.value) })}
-                placeholder="e.g. 30"
+                placeholder="e.g. 34"
               />
             </div>
           ))}
         </div>
       </section>
 
+      {/* Potencies from Products */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-3">Potency of Your Products</h2>
         <p className="text-sm text-muted-foreground mb-3">
@@ -329,6 +342,7 @@ export default function CalculatorPage() {
         </div>
       </section>
 
+      {/* Parameters */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-3">Parameters</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -340,7 +354,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={current.alk ?? ""}
               onChange={(e) => setCurrent({ ...current, alk: safeNum(e.target.value) })}
-              placeholder="e.g. 6.7"
+              placeholder="e.g. 8.4"
             />
           </div>
           <div>
@@ -351,7 +365,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={current.ca ?? ""}
               onChange={(e) => setCurrent({ ...current, ca: safeNum(e.target.value) })}
-              placeholder="e.g. 410"
+              placeholder="e.g. 430"
             />
           </div>
           <div>
@@ -362,7 +376,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={current.mg ?? ""}
               onChange={(e) => setCurrent({ ...current, mg: safeNum(e.target.value) })}
-              placeholder="e.g. 1320"
+              placeholder="e.g. 1400"
             />
           </div>
         </div>
@@ -375,7 +389,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={target.alk ?? ""}
               onChange={(e) => setTarget({ ...target, alk: safeNum(e.target.value) })}
-              placeholder="e.g. 8.0"
+              placeholder="e.g. 8.5"
             />
           </div>
           <div>
@@ -386,7 +400,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={target.ca ?? ""}
               onChange={(e) => setTarget({ ...target, ca: safeNum(e.target.value) })}
-              placeholder="e.g. 430"
+              placeholder="e.g. 440"
             />
           </div>
           <div>
@@ -397,17 +411,18 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={target.mg ?? ""}
               onChange={(e) => setTarget({ ...target, mg: safeNum(e.target.value) })}
-              placeholder="e.g. 1400"
+              placeholder="e.g. 1420"
             />
           </div>
         </div>
       </section>
 
+      {/* Results */}
       <section className="rounded-2xl border p-4">
-        <h2 className="text-lg font-semibold mb-3">Recommended Daily Dose</h2>
+        <h2 className="text-lg font-semibold mb-1">Recommended Daily Dose (total ml/day)</h2>
         <p className="text-xs text-muted-foreground mb-2">
-          If a parameter is trending up, keep your current dose for now. If it keeps rising for 3–5 days,
-          consider reducing by roughly (rise per day ÷ effect per ml) ml/day.
+          We add enough to cancel your daily drop (consumption), then gently correct the rest to target over ~7 days.
+          The "Change" line compares against your "Current Daily Dose" above.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {(["alk","ca","mg"] as const).map((k) => (
@@ -419,8 +434,7 @@ export default function CalculatorPage() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-3">
-          We compute your product's effect on your tank as: (delta ÷ dose) × (reference volume ÷ your tank litres).
-          Then we add enough to offset daily drops and gently correct toward your target over ~7 days.
+          Effect per 1 ml for your tank is computed from your product line: (delta ÷ dose) × (reference volume ÷ your tank litres).
         </p>
       </section>
     </main>
