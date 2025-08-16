@@ -1,163 +1,130 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dosing Calculator</title>
   <style>
-    :root { --bg:#0b1220; --panel:#121a2b; --muted:#9fb0cc; --text:#dfe7f5;
-            --accent:#22d3ee; --accent-2:#60a5fa; --danger:#ef4444; --ok:#22c55e;
-            --border:#1f2a44; --chip:rgba(255,255,255,0.08); --radius:14px; }
-    *{box-sizing:border-box}
-    body{margin:0;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;background:linear-gradient(180deg,#0a1020 0%,#0e1730 100%);color:var(--text)}
-    .wrap{max-width:1100px;margin:32px auto;padding:0 16px 48px}
-    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.03);padding:18px}
-    h1{font-size:22px;margin:0 0 12px} p.sub{margin:0 0 18px;color:var(--muted)}
-    .grid{display:grid;gap:14px} @media(min-width:960px){.grid.cols-3{grid-template-columns:repeat(3,1fr)}.grid.cols-4{grid-template-columns:repeat(4,1fr)}}
-    label{display:block;font-weight:600;font-size:12px;color:var(--muted);margin-bottom:6px}
-    .field{display:flex;gap:8px;align-items:center;background:#0e1628;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
-    input[type=number],input[type=text],select{width:100%;background:transparent;border:0;outline:0;color:var(--text);font-size:14px} select{cursor:pointer}
-    .unit{color:var(--muted);font-size:12px;white-space:nowrap}
-    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
-    .btn{appearance:none;border:1px solid var(--border);background:linear-gradient(180deg,#12203b,#111b31);color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600;transition:transform .06s ease,box-shadow .06s ease,border-color .2s ease;box-shadow:0 6px 16px rgba(4,8,20,.35),inset 0 1px 0 rgba(255,255,255,.05)}
-    .btn:hover{transform:translateY(-1px);border-color:#2a3a66}.btn.primary{border-color:transparent;background:linear-gradient(180deg,#1ec9e3,#2682ff);color:#021220;box-shadow:0 10px 24px rgba(34,211,238,.35)}.btn.reset{background:#1a2238;border-color:#263456;color:var(--muted)}
-    details{border-top:1px solid var(--border);margin-top:16px;padding-top:12px} summary{cursor:pointer;color:var(--muted);font-weight:600;list-style:none}
-    summary::-webkit-details-marker{display:none} summary:after{content:'▸';display:inline-block;margin-left:8px;color:var(--accent-2);transition:transform .2s ease} details[open] summary:after{transform:rotate(90deg)}
-    .table-wrap{margin-top:18px;overflow-x:auto;background:#0c1426;border:1px solid var(--border);border-radius:var(--radius)}
-    table{width:100%;border-collapse:collapse;min-width:720px} thead th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);padding:12px;border-bottom:1px solid var(--border);letter-spacing:.3px}
-    tbody td{padding:14px 12px;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:middle} tbody tr:last-child td{border-bottom:0}
-    .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;background:rgba(255,255,255,.08);border-radius:999px;font-weight:700;font-size:12px}
-    .up{color:#22c55e}.down{color:#ef4444}.muted{color:var(--muted)}.small{font-size:12px;color:var(--muted)}.hint{color:var(--muted);font-size:12px;margin-top:6px}.sep{height:1px;background:var(--border);margin:14px 0;opacity:.8}
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
+    input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #f7f7f7; }
+    .muted { opacity: .8; font-size: 0.9rem; }
+    .result { font-weight: 600; }
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <h1>Dosing Calculator</h1>
+  <p class="muted">
+    Enter potencies as increase per 1 ml per 1 liter of tank. The calculator scales this to your tank volume.
+  </p>
+
+  <div class="grid">
     <div class="card">
-      <h1>Dosing Calculator</h1>
-      <p class="sub">Standalone calculator. Your app can prefill values using the provided JS API.</p>
+      <h3>Tank</h3>
+      <label>Tank size (L)<br><input id="tankL" type="number" value="35"></label>
+      <label>Round dose to (ml)<br><input id="roundMl" type="number" value="0.1" step="0.1"></label>
+    </div>
 
-      <div class="grid cols-3">
-        <div><label>Tank volume</label><div class="field"><input id="volValue" type="number" min="0" step="any" placeholder="e.g., 110" /><span class="unit">L</span></div><div class="hint">Enter liters or pick gallons below — we’ll convert.</div></div>
-        <div><label>Volume units</label><div class="field"><select id="volUnit"><option value="L">Liters (L)</option><option value="gal">Gallons (US)</option></select></div></div>
-        <div><label>Effective liters (auto)</label><div class="field"><input id="volLiters" type="number" readonly /><span class="unit">L</span></div><div class="hint">Auto-calculated.</div></div>
-      </div>
+    <div class="card">
+      <h3>Tolerance</h3>
+      <label>Alk tol (dKH)<br><input id="tolAlk" type="number" value="0.05" step="0.01"></label>
+      <label>Ca tol (ppm)<br><input id="tolCa" type="number" value="2"></label>
+      <label>Mg tol (ppm)<br><input id="tolMg" type="number" value="5"></label>
+    </div>
 
-      <div class="sep"></div>
+    <div class="card">
+      <h3>Alkalinity</h3>
+      <label>Current dose (ml/day)<br><input id="doseAlk" type="number" value="30"></label>
+      <label>Potency dKH/ml/L<br><input id="potAlk" type="number" value="0.073" step="0.0001"></label>
+      <label>Current (dKH)<br><input id="curAlk" type="number" value="6.7" step="0.01"></label>
+      <label>Target (dKH)<br><input id="tgtAlk" type="number" value="8.0" step="0.01"></label>
+    </div>
 
-      <div class="grid cols-3">
-        <div><label>Current Alkalinity</label><div class="field"><input id="alkCurrent" type="number" step="any" placeholder="e.g., 8.5" /><span class="unit">dKH</span></div></div>
-        <div><label>Target Alkalinity</label><div class="field"><input id="alkTarget" type="number" step="any" placeholder="7–12" /><span class="unit">dKH</span></div></div>
-        <div><label>Current daily Alk dose</label><div class="field"><input id="alkDose" type="number" step="any" placeholder="ml/day" /><span class="unit">ml/day</span></div></div>
+    <div class="card">
+      <h3>Calcium</h3>
+      <label>Current dose (ml/day)<br><input id="doseCa" type="number" value="10"></label>
+      <label>Potency ppm/ml/L<br><input id="potCa" type="number" value="0.000" step="0.0001"></label>
+      <label>Current (ppm)<br><input id="curCa" type="number" value="420"></label>
+      <label>Target (ppm)<br><input id="tgtCa" type="number" value="440"></label>
+    </div>
 
-        <div><label>Current Calcium</label><div class="field"><input id="caCurrent" type="number" step="any" placeholder="e.g., 420" /><span class="unit">ppm</span></div></div>
-        <div><label>Target Calcium</label><div class="field"><input id="caTarget" type="number" step="any" placeholder="400–450" /><span class="unit">ppm</span></div></div>
-        <div><label>Current daily Ca dose</label><div class="field"><input id="caDose" type="number" step="any" placeholder="ml/day" /><span class="unit">ml/day</span></div></div>
-
-        <div><label>Current Magnesium</label><div class="field"><input id="mgCurrent" type="number" step="any" placeholder="e.g., 1380" /><span class="unit">ppm</span></div></div>
-        <div><label>Target Magnesium</label><div class="field"><input id="mgTarget" type="number" step="any" placeholder="1350–1450" /><span class="unit">ppm</span></div></div>
-        <div><label>Current daily Mg dose</label><div class="field"><input id="mgDose" type="number" step="any" placeholder="ml/day" /><span class="unit">ml/day</span></div></div>
-      </div>
-
-      <details>
-        <summary>Advanced: correction factors &amp; safe daily limits</summary>
-        <div class="grid cols-4" style="margin-top:12px;">
-          <div><label>Reference volume</label><div class="field"><input id="refVol" type="number" step="any" value="110" /><span class="unit">L</span></div></div>
-          <div><label>Alk factor (ml per 1.0 dKH @ ref)</label><div class="field"><input id="alkFactor" type="number" step="any" value="22" /></div></div>
-          <div><label>Ca factor (ml per 10 ppm @ ref)</label><div class="field"><input id="caFactor" type="number" step="any" value="12" /></div></div>
-          <div><label>Mg factor (ml per 10 ppm @ ref)</label><div class="field"><input id="mgFactor" type="number" step="any" value="50" /></div></div>
-        </div>
-        <div class="grid cols-4" style="margin-top:10px;">
-          <div><label>Alk max change/day</label><div class="field"><input id="alkSafe" type="number" step="any" value="0.25" /><span class="unit">dKH/day</span></div></div>
-          <div><label>Ca max change/day</label><div class="field"><input id="caSafe" type="number" step="any" value="20" /><span class="unit">ppm/day</span></div></div>
-          <div><label>Mg max change/day</label><div class="field"><input id="mgSafe" type="number" step="any" value="50" /><span class="unit">ppm/day</span></div></div>
-          <div><label>Rounding</label><div class="field"><input id="roundTo" type="number" step="any" value="0.1" /><span class="unit">ml</span></div></div>
-        </div>
-      </details>
-
-      <div class="actions"><button class="btn primary" id="btnCalc">Calculate</button><button class="btn reset" id="btnReset">Reset</button></div>
-
-      <div class="table-wrap" id="resultsWrap" style="display:none;">
-        <table>
-          <thead><tr><th>Parameter</th><th class="muted">Current dose</th><th class="muted">Dose increase (ml/day)</th><th class="muted">New dose (ml/day)</th><th class="muted">Expected time to target</th></tr></thead>
-          <tbody id="resultsBody"></tbody>
-        </table>
-      </div>
-
-      <p class="hint" style="margin-top:10px;">Assumes linear response; monitor and adjust.</p>
+    <div class="card">
+      <h3>Magnesium</h3>
+      <label>Current dose (ml/day)<br><input id="doseMg" type="number" value="10"></label>
+      <label>Potency ppm/ml/L<br><input id="potMg" type="number" value="0.000" step="0.0001"></label>
+      <label>Current (ppm)<br><input id="curMg" type="number" value="1280"></label>
+      <label>Target (ppm)<br><input id="tgtMg" type="number" value="1350"></label>
     </div>
   </div>
 
-  <script>
-    const GAL_TO_L = 3.78541; const el = (id) => document.getElementById(id);
-    function toLiters(value, unit){const v=Number(value)||0;return unit==='gal'?v*GAL_TO_L:v}
-    function roundTo(v,step){const s=Number(step)||0.1;return Math.round(v/s)*s}
-    function mlPerUnitAtTank(baseMlAtRef,refVolL,tankVolL,perUnits){const scale=(Number(tankVolL)||0)/(Number(refVolL)||1);return (Number(baseMlAtRef)||0)*scale/(Number(perUnits)||1)}
-    function safeDailyDoseChange(delta,safePerDay,mlPerUnit){if(!isFinite(delta)||!isFinite(safePerDay)||!isFinite(mlPerUnit))return 0;const step=Math.min(Math.abs(delta),Math.abs(safePerDay));const sign=delta>=0?1:-1;return sign*step*mlPerUnit}
-    function expectedDays(delta,safePerDay){const d=Math.abs(Number(delta)||0);const s=Math.abs(Number(safePerDay)||1e-6);return Math.ceil(d/s)}
-    function updateLiters(){const liters=toLiters(el('volValue').value,el('volUnit').value);el('volLiters').value=liters?Number(liters.toFixed(2)):''}
-    el('volValue').addEventListener('input',updateLiters); el('volUnit').addEventListener('change',updateLiters); updateLiters();
+  <p><button id="calcBtn">Calculate</button></p>
 
-    el('btnCalc').addEventListener('click', () => {
-      updateLiters();
-      const tankL=Number(el('volLiters').value)||0; const roundStep=Number(el('roundTo').value)||0.1;
-      const alk={cur:Number(el('alkCurrent').value),tgt:Number(el('alkTarget').value),dose:Number(el('alkDose').value)||0};
-      const ca ={cur:Number(el('caCurrent').value), tgt:Number(el('caTarget').value), dose:Number(el('caDose').value)||0};
-      const mg ={cur:Number(el('mgCurrent').value), tgt:Number(el('mgTarget').value), dose:Number(el('mgDose').value)||0};
+  <div class="card">
+    <h3>New Daily Doses</h3>
+    <div>Alk: <span class="result" id="outAlk">-</span> ml/day</div>
+    <div>Ca: <span class="result" id="outCa">-</span> ml/day</div>
+    <div>Mg: <span class="result" id="outMg">-</span> ml/day</div>
+    <p class="muted" id="debug"></p>
+  </div>
 
-      const refVol=Number(el('refVol').value)||110; const fAlk=Number(el('alkFactor').value)||22; const fCa10=Number(el('caFactor').value)||12; const fMg10=Number(el('mgFactor').value)||50;
-      const sAlk=Number(el('alkSafe').value)||0.25; const sCa=Number(el('caSafe').value)||20; const sMg=Number(el('mgSafe').value)||50;
+<script>
+function roundTo(value, step) {
+  var factor = 1 / step;
+  return Math.round(value * factor) / factor;
+}
+function dose(currentDose, incPerMl, currentValue, targetValue, tol, roundMl) {
+  var delta = targetValue - currentValue;
+  if (Math.abs(delta) <= tol) {
+    return [roundTo(currentDose, roundMl), delta, 0];
+  }
+  var adjustMl = incPerMl !== 0 ? (delta / incPerMl) : 0;
+  var newDose = Math.max(0, roundTo(currentDose + adjustMl, roundMl));
+  return [newDose, delta, adjustMl];
+}
+document.getElementById('calcBtn').addEventListener('click', function() {
+  var L = parseFloat(document.getElementById('tankL').value || '0');
+  var r = parseFloat(document.getElementById('roundMl').value || '0.1');
+  var tolAlk = parseFloat(document.getElementById('tolAlk').value || '0');
+  var tolCa  = parseFloat(document.getElementById('tolCa').value  || '0');
+  var tolMg  = parseFloat(document.getElementById('tolMg').value  || '0');
 
-      const mlPer_dKH=mlPerUnitAtTank(fAlk,refVol,tankL,1);
-      const mlPer_ppm_Ca=mlPerUnitAtTank(fCa10,refVol,tankL,10);
-      const mlPer_ppm_Mg=mlPerUnitAtTank(fMg10,refVol,tankL,10);
+  var incPerMlAlk = parseFloat(document.getElementById('potAlk').value || '0') * L;
+  var incPerMlCa  = parseFloat(document.getElementById('potCa').value  || '0') * L;
+  var incPerMlMg  = parseFloat(document.getElementById('potMg').value  || '0') * L;
 
-      const rows=[
-        {key:'Alkalinity',unit:'dKH',current:alk.cur,target:alk.tgt,currentDose:alk.dose,delta:(alk.tgt-alk.cur),safePerDay:sAlk,mlPerUnit:mlPer_dKH},
-        {key:'Calcium',unit:'ppm',current:ca.cur,target:ca.tgt,currentDose:ca.dose,delta:(ca.tgt-ca.cur),safePerDay:sCa,mlPerUnit:mlPer_ppm_Ca},
-        {key:'Magnesium',unit:'ppm',current:mg.cur,target:mg.tgt,currentDose:mg.dose,delta:(mg.tgt-mg.cur),safePerDay:sMg,mlPerUnit:mlPer_ppm_Mg},
-      ];
+  var outA = dose(
+    parseFloat(document.getElementById('doseAlk').value || '0'),
+    incPerMlAlk,
+    parseFloat(document.getElementById('curAlk').value || '0'),
+    parseFloat(document.getElementById('tgtAlk').value || '0'),
+    tolAlk, r
+  );
+  var outC = dose(
+    parseFloat(document.getElementById('doseCa').value || '0'),
+    incPerMlCa,
+    parseFloat(document.getElementById('curCa').value || '0'),
+    parseFloat(document.getElementById('tgtCa').value || '0'),
+    tolCa, r
+  );
+  var outM = dose(
+    parseFloat(document.getElementById('doseMg').value || '0'),
+    incPerMlMg,
+    parseFloat(document.getElementById('curMg').value || '0'),
+    parseFloat(document.getElementById('tgtMg').value || '0'),
+    tolMg, r
+  );
 
-      const tbody=el('resultsBody'); tbody.innerHTML='';
-      rows.forEach(r=>{
-        const doseChange=safeDailyDoseChange(r.delta,r.safePerDay,r.mlPerUnit);
-        const days=expectedDays(r.delta,r.safePerDay);
-        const newDose=Math.max(0,r.currentDose+doseChange);
-        const trend=doseChange>0?'up':(doseChange<0?'down':'muted');
-        const verb=doseChange>0?'Increase':(doseChange<0?'Decrease':'No change');
-        const tr=document.createElement('tr');
-        tr.innerHTML=`
-          <td><strong>${r.key}</strong> <span class="small">(${(r.current ?? '—')} → ${(r.target ?? '—')} ${r.unit})</span></td>
-          <td>${isFinite(r.currentDose)?r.currentDose:0} <span class="muted">ml/day</span></td>
-          <td><span class="chip ${trend}">${verb} ${Math.abs(roundTo(doseChange,roundStep))} ml/day</span></td>
-          <td><strong>${roundTo(newDose,roundStep)}</strong> <span class="muted">ml/day</span></td>
-          <td>${isFinite(days)&&r.delta!==0?days+' day'+(days>1?'s':''):'—'}</td>`;
-        tbody.appendChild(tr);
-      });
+  document.getElementById('outAlk').textContent = outA[0].toFixed(2);
+  document.getElementById('outCa').textContent  = outC[0].toFixed(2);
+  document.getElementById('outMg').textContent  = outM[0].toFixed(2);
 
-      document.getElementById('resultsWrap').style.display='block';
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    });
-
-    document.getElementById('btnReset').addEventListener('click',()=>{
-      ['volValue','volLiters','alkCurrent','alkTarget','alkDose','caCurrent','caTarget','caDose','mgCurrent','mgTarget','mgDose'].forEach(id=>{const n=document.getElementById(id);if(n) n.value='';});
-      document.getElementById('volUnit').value='L';
-      document.getElementById('resultsWrap').style.display='none';
-    });
-
-    // Hooks your Next.js page calls to prefill data.
-    // (No DB calls inside this file.)
-    // window.DosingCalculator.setCurrentParams({ alk, ca, mg })
-    // window.DosingCalculator.setTargetParams({ alk, ca, mg })
-    // window.DosingCalculator.setTankVolume(liters, 'L'|'gal')
-    // window.DosingCalculator.setCurrentDoses({ alk, ca, mg })
-    // window.DosingCalculator.setConfig({...})
-    window.DosingCalculator={
-      setTankVolume(value,units='L'){const u=(units==='gal')?'gal':'L';document.getElementById('volUnit').value=u;document.getElementById('volValue').value=value;updateLiters();},
-      setCurrentParams({alk,ca,mg}={}){if(alk!=null)document.getElementById('alkCurrent').value=alk;if(ca!=null)document.getElementById('caCurrent').value=ca;if(mg!=null)document.getElementById('mgCurrent').value=mg;},
-      setTargetParams({alk,ca,mg}={}){if(alk!=null)document.getElementById('alkTarget').value=alk;if(ca!=null)document.getElementById('caTarget').value=ca;if(mg!=null)document.getElementById('mgTarget').value=mg;},
-      setCurrentDoses({alk,ca,mg}={}){if(alk!=null)document.getElementById('alkDose').value=alk;if(ca!=null)document.getElementById('caDose').value=ca;if(mg!=null)document.getElementById('mgDose').value=mg;},
-      setConfig({refVol,alkFactor,caFactor,mgFactor,alkSafe,caSafe,mgSafe,roundTo:r}={}){if(refVol!=null)document.getElementById('refVol').value=refVol;if(alkFactor!=null)document.getElementById('alkFactor').value=alkFactor;if(caFactor!=null)document.getElementById('caFactor').value=caFactor;if(mgFactor!=null)document.getElementById('mgFactor').value=mgFactor;if(alkSafe!=null)document.getElementById('alkSafe').value=alkSafe;if(caSafe!=null)document.getElementById('caSafe').value=caSafe;if(mgSafe!=null)document.getElementById('mgSafe').value=mgSafe;if(r!=null)document.getElementById('roundTo').value=r;}
-    };
-  </script>
+  document.getElementById('debug').textContent =
+    'incPerMl: Alk ' + incPerMlAlk.toFixed(4) + ', Ca ' + incPerMlCa.toFixed(4) + ', Mg ' + incPerMlMg.toFixed(4) +
+    ' | delta: Alk ' + outA[1].toFixed(3) + ', Ca ' + outC[1].toFixed(1) + ', Mg ' + outM[1].toFixed(1) +
+    ' | adjustMl: Alk ' + outA[2].toFixed(3) + ', Ca ' + outC[2].toFixed(3) + ', Mg ' + outM[2].toFixed(3);
+});
+</script>
 </body>
 </html>
