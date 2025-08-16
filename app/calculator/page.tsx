@@ -38,10 +38,11 @@ function getNum(obj: any, key: string): number | undefined {
   return safeNum(v);
 }
 
-const PARAM_KEYS = {
-  alk: ["alk","alkalinity","kh","dkh","kh_dkh","alk_dkh"],
-  ca:  ["ca","calcium"],
-  mg:  ["mg","magnesium"]
+// Make PARAM_KEYS an explicit record to please TS
+const PARAM_KEYS: Record<"alk"|"ca"|"mg", readonly string[]> = {
+  alk: ["alk","alkalinity","kh","dkh","kh_dkh","alk_dkh"] as const,
+  ca:  ["ca","calcium"] as const,
+  mg:  ["mg","magnesium"] as const
 } as const;
 
 type SeriesPoint = { v: number; t: number };
@@ -191,7 +192,12 @@ export default function CalculatorPage() {
           (q:any)=> q.eq("user_id", user.id).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
         );
         for (const key of unresolved) {
-          const row = rows.find((r:any)=> (r.parameter_key && PARAM_KEYS[key].includes(String(r.parameter_key).toLowerCase())) ) ?? rows[0];
+          // prefer rows which match parameter_key if present (normalize via a Set<string> to satisfy TS)
+          const syns = new Set<string>((PARAM_KEYS[key] as readonly string[]).map(s => s.toLowerCase()));
+          const row = rows.find((r:any)=> {
+            const pk = r?.parameter_key ? String(r.parameter_key).toLowerCase() : "";
+            return syns.has(pk);
+          }) ?? rows[0];
           if (row) {
             const perL = potencyKeys.map(k => getNum(row, k)).find(v => v !== undefined);
             const doseMl = labelDoseKeys.map(k => getNum(row, k)).find(v => v !== undefined);
@@ -255,10 +261,11 @@ export default function CalculatorPage() {
               `user_id, tank_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
               (q:any)=> q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false }), 25);
             if (rows.length) {
-              const syns = new Set(PARAM_KEYS[pkey].map(s => s.toLowerCase()));
+              const syns = new Set<string>((PARAM_KEYS[pkey] as readonly string[]).map(s => s.toLowerCase()));
               const filtered = rows.filter((r:any)=> {
-                const hit = keyCols.some(k => r[k] && syns.has(String(r[k]).toLowerCase()));
-                return hit;
+                const txt = keyCols.map(k => r[k]).find(Boolean);
+                const keyTxt = txt ? String(txt).toLowerCase() : "";
+                return syns.has(keyTxt);
               });
               const pts = filtered.slice(0, 10).map((r:any) => {
                 const vRaw = [r.value, r.result_value, r.reading, r.measurement].map(safeNum).find(n => n !== undefined);
