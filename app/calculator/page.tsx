@@ -1,7 +1,8 @@
-// app/calculator/page.tsx
+\
+/* app/calculator/page.tsx */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type Doses = { alk?: number; ca?: number; mg?: number };
@@ -19,17 +20,23 @@ type ProductPotencyRaw = {
 };
 
 function safeNum(n: unknown): number | undefined {
-  const v = typeof n === "string" ? parseFloat(n) : (n as number);
-  return Number.isFinite(v) ? v : undefined;
+  if (n === null || n === undefined) return undefined;
+  if (typeof n === "number") return Number.isFinite(n) ? n : undefined;
+  if (typeof n === "string") {
+    const v = parseFloat(n);
+    return Number.isFinite(v) ? v : undefined;
+  }
+  return undefined;
 }
 function round2(n: number | undefined): string {
   if (n === undefined || !Number.isFinite(n)) return "";
   return (Math.round(n * 100) / 100).toString();
 }
-// Safe numeric getter to avoid TS "GenericStringError" on dynamic fields
+// Numeric getter that accepts numbers or numeric strings
 function getNum(obj: any, key: string): number | undefined {
-  const v = obj && typeof obj === "object" ? (obj as any)[key] : undefined;
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  if (!obj || typeof obj !== "object") return undefined;
+  const v = (obj as any)[key];
+  return safeNum(v);
 }
 
 const PARAM_KEYS = {
@@ -37,6 +44,8 @@ const PARAM_KEYS = {
   ca:  ["ca","calcium"],
   mg:  ["mg","magnesium"]
 } as const;
+
+type SeriesPoint = { v: number; t: number };
 
 export default function CalculatorPage() {
   const [tankLiters, setTankLiters] = useState<number | undefined>(undefined);
@@ -49,6 +58,13 @@ export default function CalculatorPage() {
   const [requiredDose, setRequiredDose] = useState<Doses>({});
   const [deltaDose, setDeltaDose] = useState<Doses>({});
   const [slopesPerDay, setSlopesPerDay] = useState<{[K in 'alk'|'ca'|'mg']?: number}>({});
+
+  // Per-parameter reading series (latest first)
+  const [seriesByParam, setSeriesByParam] = useState<{[K in 'alk'|'ca'|'mg']?: SeriesPoint[]}>({});
+  const hydratedRef = useRef(false);
+
+  // Lookback selector for "Change over last N readings"
+  const [lookback, setLookback] = useState<3|5|7|10>(3);
 
   function incPerMlTankFor(param: keyof Doses): number | undefined {
     const pr = product[param as 'alk'|'ca'|'mg'];
@@ -69,8 +85,7 @@ export default function CalculatorPage() {
     if (error) return null;
     return data ?? null;
   }
-  // ALWAYS returns an array (never null) to satisfy TS
-  async function tryList(table: string, select: string, filters: (q:any)=>any, limit=7): Promise<any[]> {
+  async function tryList(table: string, select: string, filters: (q:any)=>any, limit=10): Promise<any[]> {
     let q = supabase.from(table as any).select(select as any);
     q = filters(q);
     const { data, error } = await q.limit(limit);
@@ -78,13 +93,14 @@ export default function CalculatorPage() {
     return data as any[];
   }
 
+  // ---- Load dashboard/tank/targets/products + per-param series ----
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Tank (dashboard, profiles, tanks)
+      // 1) Tank
       let tankId: any = null;
       let vol: number | undefined = undefined;
       const dashCandidates = [
@@ -105,21 +121,19 @@ export default function CalculatorPage() {
         const prefTank: any = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", user.id).eq("preferred", true));
         if (prefTank) {
           tankId = prefTank.id;
-          vol = typeof prefTank.volume_liters === "number" ? prefTank.volume_liters :
-                typeof prefTank.volume_value === "number" ? prefTank.volume_value : vol;
+          vol = safeNum(prefTank.volume_liters) ?? safeNum(prefTank.volume_value) ?? vol;
         }
       }
       if (!vol) {
         const latestTank: any = await trySingle("tanks", "id, volume_liters, volume_value, created_at, user_id", (q:any)=> q.eq("user_id", user.id).order("created_at", { ascending: false }));
         if (latestTank) {
           tankId = latestTank.id;
-          vol = typeof latestTank.volume_liters === "number" ? latestTank.volume_liters :
-                typeof latestTank.volume_value === "number" ? latestTank.volume_value : vol;
+          vol = safeNum(latestTank.volume_liters) ?? safeNum(latestTank.volume_value) ?? vol;
         }
       }
       if (vol && !cancelled) setTankLiters(vol);
 
-      // Targets (various sources)
+      // 2) Targets
       const targetCandidates = [
         { table: "targets", cols: "user_id, alk, ca, mg" },
         { table: "user_targets", cols: "user_id, alk, ca, mg" },
@@ -131,93 +145,170 @@ export default function CalculatorPage() {
         const row: any = await trySingle(c.table, c.cols, (q:any)=> q.eq("user_id", user.id));
         if (row) {
           setTarget({
-            alk: typeof row.alk === "number" ? row.alk : (typeof row.alk_target === "number" ? row.alk_target : undefined),
-            ca:  typeof row.ca  === "number" ? row.ca  : (typeof row.ca_target  === "number" ? row.ca_target  : undefined),
-            mg:  typeof row.mg  === "number" ? row.mg  : (typeof row.mg_target  === "number" ? row.mg_target  : undefined),
+            alk: safeNum(row.alk) ?? safeNum(row.alk_target),
+            ca:  safeNum(row.ca)  ?? safeNum(row.ca_target),
+            mg:  safeNum(row.mg)  ?? safeNum(row.mg_target),
           });
           break;
         }
       }
 
-      // Products potency (per ml per L preferred)
+      // 3) Products potency — broadened column support + numeric strings
       const nextProducts: any = {};
+      const potencyKeys = ["potency_per_ml_per_l","per_ml_per_l","effect_per_ml_per_l","ml_per_l_increase","increase_per_ml_per_l","ml_per_l_effect"];
+      const labelDoseKeys = ["dose_ref_ml","dose_ml","reference_dose_ml"];
+      const labelDeltaKeys = ["delta_ref_value","delta_increase","increase_value"];
+      const labelVolKeys   = ["volume_ref_liters","reference_volume_liters","ref_volume_liters","tank_volume_liters"];
+
+      // Preferred: user's preferred_products join
       const prefs = await tryList("preferred_products",
-        "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, dose_ref_ml, delta_ref_value, volume_ref_liters)",
+        "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
         (q:any)=> q.in("parameter_key", ["alk","ca","mg"]).eq("user_id", user.id), 20
       );
       if (prefs.length) {
         for (const row of prefs) {
           const pk = (row as any).parameter_key as "alk"|"ca"|"mg";
           const prod: any = (row as any).products ?? {};
-          const perL = getNum(prod, "potency_per_ml_per_l") ?? getNum(prod, "per_ml_per_l") ?? getNum(prod, "effect_per_ml_per_l");
+          const perL = potencyKeys.map(k => getNum(prod, k)).find(v => v !== undefined);
+          const doseMl = labelDoseKeys.map(k => getNum(prod, k)).find(v => v !== undefined);
+          const deltaV = labelDeltaKeys.map(k => getNum(prod, k)).find(v => v !== undefined);
+          const volL   = labelVolKeys.map(k => getNum(prod, k)).find(v => v !== undefined);
           nextProducts[pk] = {
             per_liter: perL ?? null,
-            dose_ml: getNum(prod, "dose_ref_ml") ?? null,
-            delta_value: getNum(prod, "delta_ref_value") ?? null,
-            volume_liters: getNum(prod, "volume_ref_liters") ?? null,
+            dose_ml: doseMl ?? null,
+            delta_value: deltaV ?? null,
+            volume_liters: volL ?? null,
             brand: prod.brand ?? null,
             name: prod.name ?? null
           };
         }
       }
+
+      // Fallback: latest products
       const unresolved = (["alk","ca","mg"] as const).filter(k => !nextProducts[k]);
       if (unresolved.length) {
         const rows = await tryList("products",
-          "brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, dose_ref_ml, delta_ref_value, volume_ref_liters, is_preferred, created_at, parameter_id, user_id",
+          "brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, parameter_id, parameter_key, user_id",
           (q:any)=> q.eq("user_id", user.id).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
         );
-        const pickAny = () => rows?.[0] ?? null;
         for (const key of unresolved) {
-          const prod: any = pickAny();
-          if (prod) {
-            const perL = getNum(prod, "potency_per_ml_per_l") ?? getNum(prod, "per_ml_per_l") ?? getNum(prod, "effect_per_ml_per_l");
+          // prefer rows which match parameter_key if present
+          const row = rows.find((r:any)=> (r.parameter_key && PARAM_KEYS[key].includes(String(r.parameter_key).toLowerCase())) ) ?? rows[0];
+          if (row) {
+            const perL = potencyKeys.map(k => getNum(row, k)).find(v => v !== undefined);
+            const doseMl = labelDoseKeys.map(k => getNum(row, k)).find(v => v !== undefined);
+            const deltaV = labelDeltaKeys.map(k => getNum(row, k)).find(v => v !== undefined);
+            const volL   = labelVolKeys.map(k => getNum(row, k)).find(v => v !== undefined);
             nextProducts[key] = {
               per_liter: perL ?? null,
-              dose_ml: getNum(prod, "dose_ref_ml") ?? null,
-              delta_value: getNum(prod, "delta_ref_value") ?? null,
-              volume_liters: getNum(prod, "volume_ref_liters") ?? null,
-              brand: (prod as any).brand ?? null,
-              name: (prod as any).name ?? null
+              dose_ml: doseMl ?? null,
+              delta_value: deltaV ?? null,
+              volume_liters: volL ?? null,
+              brand: (row as any).brand ?? null,
+              name: (row as any).name ?? null
             };
           }
         }
       }
       if (!cancelled) setProduct((prev) => ({ ...prev, ...nextProducts }));
 
-      // Current + slope (1..7 readings) from results/readings/tests/measurements
+      // 4) Per-parameter series (latest first), 10 max
       if (tankId) {
+        // Try to resolve parameter IDs
+        const params = await tryList("parameters", "id, key", (q:any)=> q, 200);
+        const idMap = new Map<string, number>();
+        for (const p of params) {
+          const k = String((p as any).key ?? "").toLowerCase();
+          if (k) idMap.set(k, (p as any).id);
+        }
+        const pidFor = (k: "alk"|"ca"|"mg"): number | undefined => {
+          for (const syn of PARAM_KEYS[k]) {
+            const pid = idMap.get(syn.toLowerCase());
+            if (pid != null) return pid;
+          }
+          return undefined;
+        };
+
         const tableCandidates = ["results","readings","tests","measurements"];
         const valueCols = ["value","result_value","reading","measurement"];
-        let series: Array<{v:number; t:number}> = [];
-        for (const table of tableCandidates) {
-          const rows = await tryList(table,
-            `user_id, tank_id, ${valueCols.join(", ")}, measured_at, created_at`,
-            (q:any)=> q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false }), 7);
-          if (rows.length) {
-            series = rows.map((r:any) => {
-              const vRaw = [r.value, r.result_value, r.reading, r.measurement].find((x:any)=> typeof x === "number");
-              const v = Number(vRaw);
-              const tIso = r.measured_at ?? r.created_at;
-              const t = tIso ? new Date(tIso).getTime() : 0;
-              return { v, t };
-            }).filter(p => Number.isFinite(p.v) && Number.isFinite(p.t));
-            if (series.length) break;
+        const keyCols = ["parameter_key","key","param_key","name"]; // potential text keys
+
+        async function loadSeriesFor(pkey: "alk"|"ca"|"mg") {
+          const pid = pidFor(pkey);
+          // pass 1: filter by parameter_id if possible
+          for (const table of tableCandidates) {
+            const rows = await tryList(table,
+              `user_id, tank_id, parameter_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
+              (q:any)=> {
+                let qr = q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false });
+                if (pid !== undefined) qr = qr.eq("parameter_id", pid);
+                return qr;
+              }, 10);
+            if (rows.length) {
+              const pts = rows.map((r:any) => {
+                const vRaw = [r.value, r.result_value, r.reading, r.measurement].map(safeNum).find(n => n !== undefined);
+                const tIso = r.measured_at ?? r.created_at;
+                const t = tIso ? new Date(tIso).getTime() : 0;
+                return (vRaw !== undefined && Number.isFinite(t)) ? { v: vRaw as number, t } : null;
+              }).filter(Boolean) as SeriesPoint[];
+              if (pts.length) return pts;
+            }
           }
+          // pass 2: filter by textual key if no pid
+          for (const table of tableCandidates) {
+            const rows = await tryList(table,
+              `user_id, tank_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
+              (q:any)=> q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false }), 25);
+            if (rows.length) {
+              const syns = new Set(PARAM_KEYS[pkey].map(s => s.toLowerCase()));
+              const filtered = rows.filter((r:any)=> {
+                const hit = keyCols.some(k => r[k] && syns.has(String(r[k]).toLowerCase()));
+                return hit;
+              });
+              const pts = filtered.slice(0, 10).map((r:any) => {
+                const vRaw = [r.value, r.result_value, r.reading, r.measurement].map(safeNum).find(n => n !== undefined);
+                const tIso = r.measured_at ?? r.created_at;
+                const t = tIso ? new Date(tIso).getTime() : 0;
+                return (vRaw !== undefined && Number.isFinite(t)) ? { v: vRaw as number, t } : null;
+              }).filter(Boolean) as SeriesPoint[];
+              if (pts.length) return pts;
+            }
+          }
+          return [] as SeriesPoint[];
         }
-        if (series.length) {
-          const curr = Math.round(series[0].v * 100) / 100;
-          setCurrent(prev => ({ ...prev, alk: prev.alk ?? curr })); // minimal fill if empty
-          if (series.length >= 2) {
-            const t0 = series[series.length - 1].t;
-            const pts = series.map(p => ({ x: (p.t - t0) / (1000*60*60*24), y: p.v }));
-            const n = pts.length;
-            const sumx = pts.reduce((a,b)=>a+b.x,0);
-            const sumy = pts.reduce((a,b)=>a+b.y,0);
-            const sumxx = pts.reduce((a,b)=>a+b.x*b.x,0);
-            const sumxy = pts.reduce((a,b)=>a+b.x*b.y,0);
-            const denom = (n*sumxx - sumx*sumx);
-            const slope = denom !== 0 ? (n*sumxy - sumx*sumy)/denom : 0;
-            setSlopesPerDay(prev => ({ ...prev, alk: slope }));
+
+        const map: any = {};
+        for (const k of ["alk","ca","mg"] as const) {
+          map[k] = await loadSeriesFor(k);
+        }
+        if (!cancelled) {
+          setSeriesByParam(map);
+          if (!hydratedRef.current) {
+            // Set current from latest readings (unconditionally on first hydration)
+            setCurrent({
+              alk: map.alk?.[0]?.v,
+              ca:  map.ca?.[0]?.v,
+              mg:  map.mg?.[0]?.v,
+            });
+            // Slopes from each param series (linear regression)
+            const slopeOf = (pts: SeriesPoint[]) => {
+              if (pts.length < 2) return 0;
+              const t0 = pts[pts.length - 1].t;
+              const ps = pts.map(p => ({ x: (p.t - t0)/(1000*60*60*24), y: p.v }));
+              const n = ps.length;
+              const sumx = ps.reduce((a,b)=>a+b.x,0);
+              const sumy = ps.reduce((a,b)=>a+b.y,0);
+              const sumxx = ps.reduce((a,b)=>a+b.x*b.x,0);
+              const sumxy = ps.reduce((a,b)=>a+b.x*b.y,0);
+              const denom = (n*sumxx - sumx*sumx);
+              return denom !== 0 ? (n*sumxy - sumx*sumy)/denom : 0;
+            };
+            setSlopesPerDay({
+              alk: slopeOf(map.alk ?? []),
+              ca:  slopeOf(map.ca ?? []),
+              mg:  slopeOf(map.mg ?? []),
+            });
+            hydratedRef.current = true;
           }
         }
       }
@@ -225,11 +316,12 @@ export default function CalculatorPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Recompute dosing with tolerance guard
+  // ---- Dose compute (consumption cancel + gentle correction + tolerance) ----
   useEffect(() => {
     const keys: Array<keyof Doses> = ["alk", "ca", "mg"];
     const req: Doses = {};
     const delta: Doses = {};
+
     const horizonDays = 7;
     const epsilon = 0.01;
 
@@ -239,19 +331,22 @@ export default function CalculatorPage() {
       const targVal = target[k];
       const tol = tolerance[k as 'alk'|'ca'|'mg'] ?? 0;
       const slope = slopesPerDay[k as 'alk'|'ca'|'mg'] ?? 0;
-      const incPerMl = incPerMlTankFor(k);
 
+      const incPerMl = incPerMlTankFor(k);
       if (incPerMl && incPerMl > 0) {
         let holdAdjust = 0;
         let correctionAdjust = 0;
+
         if (targVal !== undefined && currVal !== undefined) {
-          const deficit = targVal - currVal; // >0 means below target
-          const outside = Math.abs(deficit) > tol;
-          if (outside && deficit > 0) {
+          const deficit = targVal - currVal;
+          const outsideBand = Math.abs(deficit) > tol;
+
+          if (outsideBand && deficit > 0) {
             if (slope < -epsilon) holdAdjust = Math.abs(slope) / incPerMl; // cancel daily drop
-            if (slope <= epsilon)  correctionAdjust = (deficit / incPerMl) / horizonDays; // gentle catch-up
+            if (slope <= epsilon) correctionAdjust = (deficit / incPerMl) / horizonDays; // gentle catch-up
           }
         }
+
         const needed = currDose + holdAdjust + correctionAdjust;
         req[k] = needed;
         delta[k] = needed - currDose;
@@ -260,12 +355,34 @@ export default function CalculatorPage() {
         delta[k] = undefined;
       }
     }
+
     setRequiredDose(req);
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
+  // ---- Change over last N readings (diff between Nth and 1st) ----
+  const changeOverLookback = useMemo(() => {
+    const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
+    (["alk","ca","mg"] as const).forEach(k => {
+      const s = seriesByParam[k] ?? [];
+      if (s.length >= lookback) {
+        const latest = s[0].v;
+        const nth = s[lookback-1].v;
+        out[k] = roundTo1(nth - latest);
+      } else {
+        out[k] = undefined;
+      }
+    });
+    return out;
+  }, [seriesByParam, lookback]);
+
+  function roundTo1(n: number | undefined): number | undefined {
+    if (n === undefined || !Number.isFinite(n)) return undefined;
+    return Math.round(n * 10) / 10;
+  }
+
   // Rounding rule for “Add”
-  function roundAdd(raw: number | undefined) {
+  function roundedAdd(raw: number | undefined) {
     if (raw === undefined || !Number.isFinite(raw)) return { add: 0, note: "" };
     const x = Math.max(0, raw);
     if (x >= 1) {
@@ -283,7 +400,7 @@ export default function CalculatorPage() {
     <main className="max-w-4xl mx-auto p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Dosing Calculator</h1>
       <p className="text-sm text-muted-foreground">
-        Tank size & targets: dashboard. Potencies: Products tab (per‑ml‑per‑L preferred; label fallback). Currents/consumption: latest 1–7 results.
+        Tank size & targets: dashboard. Potencies: Products tab (per‑ml‑per‑L preferred; label fallback). Readings/consumption: latest 1–10 results.
       </p>
 
       {/* Tank */}
@@ -378,6 +495,38 @@ export default function CalculatorPage() {
           </div>
         </div>
 
+        {/* Change over last N readings selector */}
+        <div className="mt-4">
+          <div className="flex items-center gap-3 mb-2">
+            <h3 className="text-base font-semibold">Change over last</h3>
+            <select
+              className="border rounded-lg px-2 py-1 bg-background"
+              value={lookback}
+              onChange={(e)=>setLookback(Number(e.target.value) as 3|5|7|10)}
+            >
+              <option value={3}>3 readings</option>
+              <option value={5}>5 readings</option>
+              <option value={7}>7 readings</option>
+              <option value={10}>10 readings</option>
+            </select>
+            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {(["alk","ca","mg"] as const).map((k)=>{
+              const delta = changeOverLookback[k];
+              return (
+                <div key={k} className="border rounded-xl p-3">
+                  <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
+                  <div className="text-lg">
+                    {delta === undefined ? "—" : `${delta > 0 ? "+" : ""}${round2(delta)}`}
+                    <span className="text-sm text-muted-foreground ml-1">{k==="alk"?" dKH": k==="ca"?" ppm":" ppm"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         <h3 className="text-base font-semibold mt-4">Adjustment Range (tolerance)</h3>
         <p className="text-xs text-muted-foreground mb-2">Only adjust if the difference from target exceeds this range.</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -402,9 +551,12 @@ export default function CalculatorPage() {
       {/* Results */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-1">Recommended Daily Dose (total ml/day)</h2>
-        <p className="text-xs text-muted-foreground mb-2">We offset daily consumption and only correct when outside your tolerance. "Add" = extra ml/day above your current daily dose.</p>
+        <p className="text-xs text-muted-foreground mb-2">
+          We offset daily consumption, then gently correct toward target only when outside your tolerance band.
+          “Add” shows extra ml/day on top of your current daily dose.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {(["alk","ca","mg"] as const).map((k) => {
+          {(["alk", "ca", "mg"] as const).map((k) => {
             const rawAdd = (deltaDose[k] ?? 0);
             const x = Math.max(0, Number.isFinite(rawAdd as number) ? (rawAdd as number) : 0);
             let add = 0; let note = "";
