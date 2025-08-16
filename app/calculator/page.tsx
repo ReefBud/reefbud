@@ -99,6 +99,7 @@ export default function CalculatorPage() {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+      const uid: string = user.id; // capture non-null for TS safety
 
       // 1) Tank
       let tankId: any = null;
@@ -110,7 +111,7 @@ export default function CalculatorPage() {
         { table: "user_settings", cols: "user_id, preferred_tank_id, tank_volume_liters, tank_volume" },
       ];
       for (const c of dashCandidates) {
-        const row: any = await trySingle(c.table, c.cols, (q:any)=> q.eq("user_id", user.id));
+        const row: any = await trySingle(c.table, c.cols, (q:any)=> q.eq("user_id", uid));
         if (row) {
           tankId = row.tank_id ?? row.preferred_tank_id ?? tankId;
           const v = row.tank_volume_liters ?? row.tank_volume;
@@ -118,14 +119,14 @@ export default function CalculatorPage() {
         }
       }
       if (!vol) {
-        const prefTank: any = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", user.id).eq("preferred", true));
+        const prefTank: any = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", uid).eq("preferred", true));
         if (prefTank) {
           tankId = prefTank.id;
           vol = safeNum(prefTank.volume_liters) ?? safeNum(prefTank.volume_value) ?? vol;
         }
       }
       if (!vol) {
-        const latestTank: any = await trySingle("tanks", "id, volume_liters, volume_value, created_at, user_id", (q:any)=> q.eq("user_id", user.id).order("created_at", { ascending: false }));
+        const latestTank: any = await trySingle("tanks", "id, volume_liters, volume_value, created_at, user_id", (q:any)=> q.eq("user_id", uid).order("created_at", { ascending: false }));
         if (latestTank) {
           tankId = latestTank.id;
           vol = safeNum(latestTank.volume_liters) ?? safeNum(latestTank.volume_value) ?? vol;
@@ -142,7 +143,7 @@ export default function CalculatorPage() {
         { table: "dashboard", cols: "user_id, alk_target, ca_target, mg_target" },
       ];
       for (const c of targetCandidates) {
-        const row: any = await trySingle(c.table, c.cols, (q:any)=> q.eq("user_id", user.id));
+        const row: any = await trySingle(c.table, c.cols, (q:any)=> q.eq("user_id", uid));
         if (row) {
           setTarget({
             alk: safeNum(row.alk) ?? safeNum(row.alk_target),
@@ -163,7 +164,7 @@ export default function CalculatorPage() {
       // Preferred: user's preferred_products join
       const prefs = await tryList("preferred_products",
         "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
-        (q:any)=> q.in("parameter_key", ["alk","ca","mg"]).eq("user_id", user.id), 20
+        (q:any)=> q.in("parameter_key", ["alk","ca","mg"]).eq("user_id", uid), 20
       );
       if (prefs.length) {
         for (const row of prefs) {
@@ -189,7 +190,7 @@ export default function CalculatorPage() {
       if (unresolved.length) {
         const rows = await tryList("products",
           "brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, parameter_id, parameter_key, user_id",
-          (q:any)=> q.eq("user_id", user.id).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
+          (q:any)=> q.eq("user_id", uid).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
         );
         for (const key of unresolved) {
           // prefer rows which match parameter_key if present (normalize via a Set<string> to satisfy TS)
@@ -242,7 +243,7 @@ export default function CalculatorPage() {
             const rows = await tryList(table,
               `user_id, tank_id, parameter_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
               (q:any)=> {
-                let qr = q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false });
+                let qr = q.eq("user_id", uid).eq("tank_id", tankId).order("measured_at", { ascending: false });
                 if (pid !== undefined) qr = qr.eq("parameter_id", pid);
                 return qr;
               }, 10);
@@ -259,7 +260,7 @@ export default function CalculatorPage() {
           for (const table of tableCandidates) {
             const rows = await tryList(table,
               `user_id, tank_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
-              (q:any)=> q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false }), 25);
+              (q:any)=> q.eq("user_id", uid).eq("tank_id", tankId).order("measured_at", { ascending: false }), 25);
             if (rows.length) {
               const syns = new Set<string>((PARAM_KEYS[pkey] as readonly string[]).map(s => s.toLowerCase()));
               const filtered = rows.filter((r:any)=> {
