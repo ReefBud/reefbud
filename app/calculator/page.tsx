@@ -69,12 +69,13 @@ export default function CalculatorPage() {
     if (error) return null;
     return data ?? null;
   }
-  async function tryList(table: string, select: string, filters: (q:any)=>any, limit=7) {
+  // ALWAYS returns an array (never null) to satisfy TS
+  async function tryList(table: string, select: string, filters: (q:any)=>any, limit=7): Promise<any[]> {
     let q = supabase.from(table as any).select(select as any);
     q = filters(q);
     const { data, error } = await q.limit(limit);
-    if (error) return null;
-    return (data as any[]) ?? [];
+    if (error || !data) return [];
+    return data as any[];
   }
 
   useEffect(() => {
@@ -144,7 +145,7 @@ export default function CalculatorPage() {
         "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, dose_ref_ml, delta_ref_value, volume_ref_liters)",
         (q:any)=> q.in("parameter_key", ["alk","ca","mg"]).eq("user_id", user.id), 20
       );
-      if (prefs?.length) {
+      if (prefs.length) {
         for (const row of prefs) {
           const pk = (row as any).parameter_key as "alk"|"ca"|"mg";
           const prod: any = (row as any).products ?? {};
@@ -161,10 +162,10 @@ export default function CalculatorPage() {
       }
       const unresolved = (["alk","ca","mg"] as const).filter(k => !nextProducts[k]);
       if (unresolved.length) {
-        const rows: any[] = await tryList("products",
+        const rows = await tryList("products",
           "brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, dose_ref_ml, delta_ref_value, volume_ref_liters, is_preferred, created_at, parameter_id, user_id",
           (q:any)=> q.eq("user_id", user.id).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
-        ) as any[];
+        );
         const pickAny = () => rows?.[0] ?? null;
         for (const key of unresolved) {
           const prod: any = pickAny();
@@ -183,16 +184,16 @@ export default function CalculatorPage() {
       }
       if (!cancelled) setProduct((prev) => ({ ...prev, ...nextProducts }));
 
-      // Current + slope (1..7 latest readings)
+      // Current + slope (1..7 readings) from results/readings/tests/measurements
       if (tankId) {
         const tableCandidates = ["results","readings","tests","measurements"];
         const valueCols = ["value","result_value","reading","measurement"];
         let series: Array<{v:number; t:number}> = [];
         for (const table of tableCandidates) {
-          const rows: any[] = await tryList(table,
+          const rows = await tryList(table,
             `user_id, tank_id, ${valueCols.join(", ")}, measured_at, created_at`,
             (q:any)=> q.eq("user_id", user.id).eq("tank_id", tankId).order("measured_at", { ascending: false }), 7);
-          if (rows?.length) {
+          if (rows.length) {
             series = rows.map((r:any) => {
               const vRaw = [r.value, r.result_value, r.reading, r.measurement].find((x:any)=> typeof x === "number");
               const v = Number(vRaw);
@@ -224,7 +225,7 @@ export default function CalculatorPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Dose recompute
+  // Recompute dosing with tolerance guard
   useEffect(() => {
     const keys: Array<keyof Doses> = ["alk", "ca", "mg"];
     const req: Doses = {};
@@ -244,11 +245,11 @@ export default function CalculatorPage() {
         let holdAdjust = 0;
         let correctionAdjust = 0;
         if (targVal !== undefined && currVal !== undefined) {
-          const deficit = targVal - currVal;
+          const deficit = targVal - currVal; // >0 means below target
           const outside = Math.abs(deficit) > tol;
           if (outside && deficit > 0) {
-            if (slope < -epsilon) holdAdjust = Math.abs(slope) / incPerMl;
-            if (slope <= epsilon)  correctionAdjust = (deficit / incPerMl) / horizonDays;
+            if (slope < -epsilon) holdAdjust = Math.abs(slope) / incPerMl; // cancel daily drop
+            if (slope <= epsilon)  correctionAdjust = (deficit / incPerMl) / horizonDays; // gentle catch-up
           }
         }
         const needed = currDose + holdAdjust + correctionAdjust;
@@ -263,6 +264,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
+  // Rounding rule for “Add”
   function roundAdd(raw: number | undefined) {
     if (raw === undefined || !Number.isFinite(raw)) return { add: 0, note: "" };
     const x = Math.max(0, raw);
