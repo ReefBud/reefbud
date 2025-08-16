@@ -1,4 +1,3 @@
-\
 /* app/calculator/page.tsx */
 "use client";
 
@@ -192,7 +191,6 @@ export default function CalculatorPage() {
           (q:any)=> q.eq("user_id", user.id).order("is_preferred", { ascending: false }).order("created_at", { ascending: false }), 50
         );
         for (const key of unresolved) {
-          // prefer rows which match parameter_key if present
           const row = rows.find((r:any)=> (r.parameter_key && PARAM_KEYS[key].includes(String(r.parameter_key).toLowerCase())) ) ?? rows[0];
           if (row) {
             const perL = potencyKeys.map(k => getNum(row, k)).find(v => v !== undefined);
@@ -214,7 +212,6 @@ export default function CalculatorPage() {
 
       // 4) Per-parameter series (latest first), 10 max
       if (tankId) {
-        // Try to resolve parameter IDs
         const params = await tryList("parameters", "id, key", (q:any)=> q, 200);
         const idMap = new Map<string, number>();
         for (const p of params) {
@@ -231,11 +228,10 @@ export default function CalculatorPage() {
 
         const tableCandidates = ["results","readings","tests","measurements"];
         const valueCols = ["value","result_value","reading","measurement"];
-        const keyCols = ["parameter_key","key","param_key","name"]; // potential text keys
+        const keyCols = ["parameter_key","key","param_key","name"];
 
         async function loadSeriesFor(pkey: "alk"|"ca"|"mg") {
           const pid = pidFor(pkey);
-          // pass 1: filter by parameter_id if possible
           for (const table of tableCandidates) {
             const rows = await tryList(table,
               `user_id, tank_id, parameter_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
@@ -254,7 +250,6 @@ export default function CalculatorPage() {
               if (pts.length) return pts;
             }
           }
-          // pass 2: filter by textual key if no pid
           for (const table of tableCandidates) {
             const rows = await tryList(table,
               `user_id, tank_id, ${keyCols.join(",")}, ${valueCols.join(",")}, measured_at, created_at`,
@@ -284,13 +279,11 @@ export default function CalculatorPage() {
         if (!cancelled) {
           setSeriesByParam(map);
           if (!hydratedRef.current) {
-            // Set current from latest readings (unconditionally on first hydration)
             setCurrent({
               alk: map.alk?.[0]?.v,
               ca:  map.ca?.[0]?.v,
               mg:  map.mg?.[0]?.v,
             });
-            // Slopes from each param series (linear regression)
             const slopeOf = (pts: SeriesPoint[]) => {
               if (pts.length < 2) return 0;
               const t0 = pts[pts.length - 1].t;
