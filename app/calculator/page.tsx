@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 type Doses = { alk?: number; ca?: number; mg?: number };
 type Params = { alk?: number; ca?: number; mg?: number };
 type Targets = Params;
+type Tolerances = { alk?: number; ca?: number; mg?: number };
 
 type ProductPotencyRaw = {
   dose_ml?: number;        // e.g., 30 ml
@@ -31,6 +32,7 @@ export default function CalculatorPage() {
   const [currentDose, setCurrentDose] = useState<Doses>({});
   const [current, setCurrent] = useState<Params>({});
   const [target, setTarget] = useState<Targets>({});
+  const [tolerance, setTolerance] = useState<Tolerances>({ alk: 0.0, ca: 0, mg: 0 }); // user-set adjustment band
 
   // Product raw entries by parameter (pulled from Products tab)
   const [product, setProduct] = useState<{[K in 'alk'|'ca'|'mg']?: ProductPotencyRaw}>({});
@@ -201,7 +203,8 @@ export default function CalculatorPage() {
   // Compute recommended dose (TOTAL ml/day):
   // - Hold adjustment offsets any daily drop (negative slope) using incPerMlTank
   // - Gentle correction toward target over ~7 days if not trending upward
-  // - NEVER recommend a large reduction just because you're above target; wait for 3–5 days trend
+  // - Apply tolerance band: only act if |target - current| > tolerance
+  // - Never add when current > target or within tolerance band
   useEffect(() => {
     const keys: Array<keyof Doses> = ["alk", "ca", "mg"];
     const req: Doses = {};
@@ -214,21 +217,26 @@ export default function CalculatorPage() {
       const currDose = currentDose[k] ?? 0;
       const currVal = current[k];
       const targVal = target[k];
+      const tol = tolerance[k as 'alk'|'ca'|'mg'] ?? 0;
       const slope = slopesPerDay[k as 'alk'|'ca'|'mg'] ?? 0; // +rising, -dropping
 
       const incPerMl = incPerMlTankFor(k);
       if (incPerMl && incPerMl > 0) {
         let holdAdjust = 0;
-        if (slope < -epsilon) {
-          // Add enough to cancel the drop
-          holdAdjust = Math.abs(slope) / incPerMl;
-        }
-
         let correctionAdjust = 0;
+
         if (targVal !== undefined && currVal !== undefined) {
-          const deficit = targVal - currVal;
-          if (deficit > 0 && slope <= epsilon) {
-            // Spread the catch-up across ~7 days
+          const deficit = targVal - currVal;           // >0 means below target
+          const absDef = Math.abs(deficit);
+          const outsideBand = absDef > tol;
+
+          // Only hold if we're below target beyond tolerance (don't add if above target or within band)
+          if (outsideBand && deficit > 0 && slope < -epsilon) {
+            holdAdjust = Math.abs(slope) / incPerMl;
+          }
+
+          // Gentle correction only if below target beyond tolerance and not rising
+          if (outsideBand && deficit > 0 && slope <= epsilon) {
             correctionAdjust = (deficit / incPerMl) / horizonDays;
           }
         }
@@ -244,15 +252,38 @@ export default function CalculatorPage() {
 
     setRequiredDose(req);
     setDeltaDose(delta);
-  }, [tankLiters, currentDose, current, target, product, slopesPerDay]);
+  }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
+
+  // Rounding helper for "Add" display (integer ml with rule: always floor; if <1 and >=0.8 -> 1)
+  function roundedAddInfo(raw: number | undefined) {
+    if (raw === undefined || !Number.isFinite(raw)) return { shown: "", note: "" };
+    const x = Math.max(0, raw);
+    let shown = 0;
+    let note = "";
+    if (x >= 1) {
+      shown = Math.floor(x);
+      const diff = x - shown;
+      if (diff > 0) note = `rounded down by ${round2(diff)} ml`;
+    } else {
+      if (x >= 0.8) {
+        shown = 1;
+        const up = 1 - x;
+        note = `rounded up by ${round2(up)} ml`;
+      } else {
+        shown = 0;
+        if (x > 0) note = `rounded down by ${round2(x)} ml`;
+      }
+    }
+    return { shown: `${shown}`, note };
+  }
 
   // UI
   return (
     <main className="max-w-4xl mx-auto p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Dosing Calculator</h1>
       <p className="text-sm text-muted-foreground">
-        Potencies are taken directly from your Products tab (e.g., "30 ml raises 2.2 in a 35 L tank").
-        Targets come from your dashboard. Currents are from your latest readings; daily consumption is computed from up to the last 7 readings.
+        Potencies come from your Products tab (e.g., "30 ml raises 2.2 in a 35 L tank").
+        Targets come from your dashboard. Currents and daily consumption are computed from your latest 1–7 readings.
       </p>
 
       {/* Tank */}
@@ -286,7 +317,7 @@ export default function CalculatorPage() {
                 className="w-full border rounded-lg p-2 bg-background"
                 value={currentDose[k as keyof Doses] ?? ""}
                 onChange={(e) => setCurrentDose({ ...currentDose, [k]: safeNum(e.target.value) })}
-                placeholder="e.g. 34"
+                placeholder={k==="alk"?"e.g. 34":"e.g. 12"}
               />
             </div>
           ))}
@@ -313,36 +344,13 @@ export default function CalculatorPage() {
                 ) : (
                   <div className="text-sm">No product found. Add it on the Products tab or set a preferred product.</div>
                 )}
-                <details className="mt-2">
-                  <summary className="text-xs underline cursor-pointer">Override manually</summary>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    <input
-                      type="number" inputMode="decimal" placeholder="dose (ml)"
-                      className="w-full border rounded-lg p-2 bg-background"
-                      value={pr?.dose_ml ?? ""}
-                      onChange={(e) => setProduct(prev => ({ ...prev, [k]: { ...(prev as any)[k], dose_ml: safeNum(e.target.value) } }))}
-                    />
-                    <input
-                      type="number" inputMode="decimal" placeholder="delta value"
-                      className="w-full border rounded-lg p-2 bg-background"
-                      value={pr?.delta_value ?? ""}
-                      onChange={(e) => setProduct(prev => ({ ...prev, [k]: { ...(prev as any)[k], delta_value: safeNum(e.target.value) } }))}
-                    />
-                    <input
-                      type="number" inputMode="decimal" placeholder="tank litres"
-                      className="w-full border rounded-lg p-2 bg-background"
-                      value={pr?.volume_liters ?? ""}
-                      onChange={(e) => setProduct(prev => ({ ...prev, [k]: { ...(prev as any)[k], volume_liters: safeNum(e.target.value) } }))}
-                    />
-                  </div>
-                </details>
               </div>
             );
           })}
         </div>
       </section>
 
-      {/* Parameters */}
+      {/* Parameters + Tolerance */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-3">Parameters</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -365,7 +373,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={current.ca ?? ""}
               onChange={(e) => setCurrent({ ...current, ca: safeNum(e.target.value) })}
-              placeholder="e.g. 430"
+              placeholder="e.g. 435"
             />
           </div>
           <div>
@@ -400,7 +408,7 @@ export default function CalculatorPage() {
               className="w-full border rounded-lg p-2 bg-background"
               value={target.ca ?? ""}
               onChange={(e) => setTarget({ ...target, ca: safeNum(e.target.value) })}
-              placeholder="e.g. 440"
+              placeholder="e.g. 430"
             />
           </div>
           <div>
@@ -415,23 +423,76 @@ export default function CalculatorPage() {
             />
           </div>
         </div>
+
+        <h3 className="text-base font-semibold mt-4">Adjustment Range (tolerance)</h3>
+        <p className="text-xs text-muted-foreground mb-2">
+          Only adjust if the difference from target exceeds this range. Example: target 8.5, drop to 8.3 with range 0.4 → no increase suggested.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-sm text-muted-foreground mb-1">Alk tolerance (dKH)</label>
+            <input
+              type="number" inputMode="decimal" className="w-full border rounded-lg p-2 bg-background"
+              value={tolerance.alk ?? ""}
+              onChange={(e)=>setTolerance(prev=>({ ...prev, alk: safeNum(e.target.value) }))}
+              placeholder="e.g. 0.4"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-muted-foreground mb-1">Ca tolerance (ppm)</label>
+            <input
+              type="number" inputMode="decimal" className="w-full border rounded-lg p-2 bg-background"
+              value={tolerance.ca ?? ""}
+              onChange={(e)=>setTolerance(prev=>({ ...prev, ca: safeNum(e.target.value) }))}
+              placeholder="e.g. 10"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-muted-foreground mb-1">Mg tolerance (ppm)</label>
+            <input
+              type="number" inputMode="decimal" className="w-full border rounded-lg p-2 bg-background"
+              value={tolerance.mg ?? ""}
+              onChange={(e)=>setTolerance(prev=>({ ...prev, mg: safeNum(e.target.value) }))}
+              placeholder="e.g. 20"
+            />
+          </div>
+        </div>
       </section>
 
       {/* Results */}
       <section className="rounded-2xl border p-4">
         <h2 className="text-lg font-semibold mb-1">Recommended Daily Dose (total ml/day)</h2>
         <p className="text-xs text-muted-foreground mb-2">
-          We add enough to cancel your daily drop (consumption), then gently correct the rest to target over ~7 days.
-          The "Change" line compares against your "Current Daily Dose" above.
+          We first offset daily consumption, then gently correct toward target only when outside your tolerance range.
+          "Add" shows the extra ml/day to add on top of your current daily dose.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {(["alk","ca","mg"] as const).map((k) => (
-            <div key={k} className="border rounded-xl p-3">
-              <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
-              <div className="text-2xl font-semibold">{round2(requiredDose[k]) || "-"} ml</div>
-              <div className="text-xs mt-1">Change: {round2(deltaDose[k]) || "-"} ml/day</div>
-            </div>
-          ))}
+          {(["alk","ca","mg"] as const).map((k) => {
+            const rawAdd = (deltaDose[k] ?? 0);
+            const x = Math.max(0, Number.isFinite(rawAdd as number) ? (rawAdd as number) : 0);
+            let shownInt = 0;
+            let note = "";
+            if (x >= 1) {
+              shownInt = Math.floor(x);
+              const diff = x - shownInt;
+              if (diff > 0) note = `rounded down by ${round2(diff)} ml`;
+            } else if (x >= 0.8) {
+              shownInt = 1;
+              const up = 1 - x;
+              note = `rounded up by ${round2(up)} ml`;
+            } else {
+              shownInt = 0;
+              if (x > 0) note = `rounded down by ${round2(x)} ml`;
+            }
+            const total = (currentDose[k] ?? 0) + shownInt;
+            return (
+              <div key={k} className="border rounded-xl p-3">
+                <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
+                <div className="text-2xl font-semibold">{round2(total)} ml/day</div>
+                <div className="text-xs mt-1">Add: {shownInt} ml/day{note ? ` (${note})` : ""}</div>
+              </div>
+            );
+          })}
         </div>
         <p className="text-xs text-muted-foreground mt-3">
           Effect per 1 ml for your tank is computed from your product line: (delta ÷ dose) × (reference volume ÷ your tank litres).
