@@ -185,7 +185,20 @@ export default function CalculatorPage() {
         const p1 = extract(pref?.products);
         if (p1) return p1;
 
-        // B) products table (preferred first, then best text match)
+        // B) direct lookup in products tab (most recent match for this parameter)
+        const { data: prodRows } = await supabase
+          .from("products")
+          .select(
+            "brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters"
+          )
+          .eq("user_id", uid)
+          .eq("parameter_key", param)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const p2 = extract(prodRows?.[0]);
+        if (p2) return p2;
+
+        // C) fallback search in products table for loosely matched entries
         const products = await fetchRowsFlexible(
           "products",
           "brand, name, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
@@ -202,7 +215,7 @@ export default function CalculatorPage() {
           if (p) return p;
         }
 
-        // C) alternates
+        // D) alternates / legacy tables
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
@@ -225,7 +238,6 @@ export default function CalculatorPage() {
       // 4) Series (no server-side ordering; sort client-side; robust key/time extraction)
       async function loadSeriesFor(pkey: "alk"|"ca"|"mg"): Promise<SeriesPoint[]> {
         const syns = new Set<string>(PARAM_KEYS[pkey].map(s=>s.toLowerCase()));
-        const tables = ["results","readings","tests","measurements","water_tests","test_results","reef_results"];
         const valueCols = ["value","result_value","reading","measurement","value_dkh","value_ppm","val"];
         const timeCols  = ["measured_at","taken_at","tested_at","created_at","inserted_at","date","timestamp"];
         const keyCols   = ["parameter_id","parameter_key","parameter","param","key","name","type"];
@@ -260,10 +272,8 @@ export default function CalculatorPage() {
           return false;
         };
 
-        for (const table of tables) {
-          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
-          if (!rows?.length) continue;
-          const pts = rows
+        const process = (rows:any[]): SeriesPoint[] => {
+          return rows
             .filter(keyMatch)
             .map((r:any)=> {
               const v = extractValue(r);
@@ -271,6 +281,28 @@ export default function CalculatorPage() {
               return (v !== undefined && t > 0) ? { v, t } : null;
             })
             .filter(Boolean) as SeriesPoint[];
+        };
+
+        // Prefer direct query to results tab
+        try {
+          const { data: direct } = await supabase
+            .from("results")
+            .select("*")
+            .eq("user_id", uid)
+            .eq("tank_id", tankId)
+            .limit(200);
+          const pts = process(direct || []);
+          if (pts.length) {
+            pts.sort((a,b)=> b.t - a.t);
+            return pts.slice(0,10);
+          }
+        } catch (_e) { /* ignore */ }
+
+        const tables = ["readings","tests","measurements","water_tests","test_results","reef_results"];
+        for (const table of tables) {
+          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
+          if (!rows?.length) continue;
+          const pts = process(rows);
           if (pts.length) {
             pts.sort((a,b)=> b.t - a.t);
             return pts.slice(0, 10);
@@ -347,7 +379,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
-  // Change over last N readings (diff between Nth and 1st)
+  // Change over last N readings (latest minus Nth reading)
   const changeOverLookback = useMemo(() => {
     const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
     (["alk","ca","mg"] as const).forEach(k => {
@@ -355,7 +387,7 @@ export default function CalculatorPage() {
       if (s.length >= lookback) {
         const latest = s[0].v;
         const nth = s[lookback-1].v;
-        const diff = nth - latest;
+        const diff = latest - nth;
         out[k] = Math.round(diff * 10) / 10;
       } else {
         out[k] = undefined;
@@ -477,17 +509,11 @@ export default function CalculatorPage() {
               <option value={7}>7 readings</option>
               <option value={10}>10 readings</option>
             </select>
-            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+            <span className="text-sm text-muted-foreground">Δ = reading #1 − reading #{String(lookback)}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(["alk","ca","mg"] as const).map((k)=>{
-              const s = seriesByParam[k] ?? [];
-              let delta: number | undefined = undefined;
-              if (s.length >= lookback) {
-                const latest = s[0].v;
-                const nth = s[lookback-1].v;
-                delta = Math.round((nth - latest) * 10) / 10;
-              }
+              const delta = changeOverLookback[k];
               return (
                 <div key={k} className="border rounded-xl p-3">
                   <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
