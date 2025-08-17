@@ -98,7 +98,7 @@ export default function CalculatorPage() {
     const D = pr.dose_ml ?? undefined, d = pr.delta_value ?? undefined, Vref = pr.volume_liters ?? undefined;
     if (!D || !d || !Vref || !V) return undefined;
     if (!Number.isFinite(D) || !Number.isFinite(d) || !Number.isFinite(Vref) || !Number.isFinite(V) || D <= 0 || Vref <= 0 || V <= 0) return undefined;
-    return (d / D) * (Vref / V);
+    return (d / D) * (V / Vref);
   }
 
   useEffect(() => {
@@ -179,8 +179,12 @@ export default function CalculatorPage() {
         // A) preferred_products join (if present)
         const pref = await trySingle(
           "preferred_products",
-          "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
-          (q:any)=> q.eq("user_id", uid).eq("parameter_key", param)
+          "parameter_key, tank_id, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
+          (q:any)=> {
+            let r = q.eq("parameter_key", param);
+            if (tankId) r = r.eq("tank_id", tankId);
+            return r;
+          }
         );
         const p1 = extract(pref?.products);
         if (p1) return p1;
@@ -192,8 +196,12 @@ export default function CalculatorPage() {
           uid, tankId, 200
         );
         const scored = (products || []).map((r:any) => {
-          const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
-          const hit = keys.some((k:string)=> syns.has(k));
+          const keys = [r.parameter_key, r.parameter, r.key, r.name]
+            .filter(Boolean)
+            .map((x:any)=> String(x).toLowerCase());
+          const hit = keys.some((k:string)=>
+            Array.from(syns).some(s => k.includes(s))
+          );
           const score = (r.is_preferred ? 2 : 0) + (hit ? 1 : 0);
           return { row:r, score };
         }).sort((a,b)=> b.score - a.score);
@@ -347,7 +355,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
-  // Change over last N readings (diff between Nth and 1st)
+  // Change over last N readings (latest minus Nth)
   const changeOverLookback = useMemo(() => {
     const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
     (["alk","ca","mg"] as const).forEach(k => {
@@ -355,7 +363,7 @@ export default function CalculatorPage() {
       if (s.length >= lookback) {
         const latest = s[0].v;
         const nth = s[lookback-1].v;
-        const diff = nth - latest;
+        const diff = latest - nth;
         out[k] = Math.round(diff * 10) / 10;
       } else {
         out[k] = undefined;
@@ -477,17 +485,17 @@ export default function CalculatorPage() {
               <option value={7}>7 readings</option>
               <option value={10}>10 readings</option>
             </select>
-            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+              <span className="text-sm text-muted-foreground">Δ = reading #1 − reading #{String(lookback)}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(["alk","ca","mg"] as const).map((k)=>{
               const s = seriesByParam[k] ?? [];
               let delta: number | undefined = undefined;
-              if (s.length >= lookback) {
-                const latest = s[0].v;
-                const nth = s[lookback-1].v;
-                delta = Math.round((nth - latest) * 10) / 10;
-              }
+                if (s.length >= lookback) {
+                  const latest = s[0].v;
+                  const nth = s[lookback-1].v;
+                  delta = Math.round((latest - nth) * 10) / 10;
+                }
               return (
                 <div key={k} className="border rounded-xl p-3">
                   <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
