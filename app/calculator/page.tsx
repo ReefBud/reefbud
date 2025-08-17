@@ -150,9 +150,18 @@ export default function CalculatorPage() {
         if (targ.alk || targ.ca || targ.mg) { if (!cancelled) setTarget(targ); break; }
       }
 
-      // 3) Products potency (robust)
+      // 3) Parameter ID map (for numeric parameter_id columns)
+      const paramRows = await trySelect("parameters", "id, key", (q:any)=> q.in("key", ["alk","ca","mg"]));
+      const paramIdMap: {[K in 'alk'|'ca'|'mg']?: number} = {};
+      for (const r of paramRows) {
+        const k = typeof r?.key === "string" ? String(r.key).toLowerCase() : "";
+        if (k === "alk" || k === "ca" || k === "mg") paramIdMap[k as 'alk'|'ca'|'mg'] = r.id;
+      }
+
+      // 4) Products potency (robust)
       async function loadProductFor(param: "alk"|"ca"|"mg"): Promise<ProductPotencyRaw | null> {
         const syns = new Set<string>(PARAM_KEYS[param].map(s=>s.toLowerCase()));
+        const paramId = paramIdMap[param];
         const extract = (obj:any): ProductPotencyRaw | null => {
           if (!obj) return null;
           const potencyKeys = ["potency_per_ml_per_l","per_ml_per_l","effect_per_ml_per_l","ml_per_l_increase","increase_per_ml_per_l","ml_per_l_effect"];
@@ -188,10 +197,11 @@ export default function CalculatorPage() {
         // B) products table (preferred first, then best text match)
         const products = await fetchRowsFlexible(
           "products",
-          "brand, name, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
+          "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
           uid, tankId, 200
         );
-        const scored = (products || []).map((r:any) => {
+        const filtered = (products || []).filter((r:any)=> paramId ? r.parameter_id === paramId : true);
+        const scored = filtered.map((r:any) => {
           const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
           const hit = keys.some((k:string)=> syns.has(k));
           const score = (r.is_preferred ? 2 : 0) + (hit ? 1 : 0);
@@ -206,6 +216,7 @@ export default function CalculatorPage() {
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
+            if (paramId && r.parameter_id !== paramId) continue;
             const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
             if (keys.some((k:string)=> syns.has(k))) {
               const p = extract(r);
@@ -221,8 +232,8 @@ export default function CalculatorPage() {
         if (p) nextProducts[k] = p;
       }
       if (!cancelled) setProduct((prev)=> ({...prev, ...nextProducts}));
-
-      // 4) Series (no server-side ordering; sort client-side; robust key/time extraction)
+      
+      // 5) Series (no server-side ordering; sort client-side; robust key/time extraction)
       async function loadSeriesFor(pkey: "alk"|"ca"|"mg"): Promise<SeriesPoint[]> {
         const syns = new Set<string>(PARAM_KEYS[pkey].map(s=>s.toLowerCase()));
         const tables = ["results","readings","tests","measurements","water_tests","test_results","reef_results"];
@@ -251,6 +262,7 @@ export default function CalculatorPage() {
           return 0;
         };
         const keyMatch = (r:any): boolean => {
+          if (paramIdMap[pkey] !== undefined && r?.parameter_id === paramIdMap[pkey]) return true;
           const txt = keyCols.map(k => r?.[k]).find(x => typeof x === "string");
           const s = txt ? String(txt).toLowerCase() : "";
           if (syns.has(s)) return true;
