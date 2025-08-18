@@ -113,8 +113,7 @@ export default function CalculatorPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const uid: string = user.id;
-
-      // 1) Tank (dashboard/profile/tanks; no server-side order to avoid missing columns)
+      // 1) Tank (fetch from tanks table like dashboard; fall back to older sources)
       let tankId: any = null;
       let vol: number | undefined = undefined;
       const dashRows = await Promise.all([
@@ -136,13 +135,22 @@ export default function CalculatorPage() {
         }
       }
       if (!vol) {
-        const prefTank = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", uid));
-        if (prefTank) {
-          tankId = prefTank.id ?? tankId;
-          vol = safeNum(prefTank.volume_liters) ?? safeNum(prefTank.volume_value) ?? vol;
+        const dashRows = await Promise.all([
+          trySingle("user_dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("profiles", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("user_settings", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+        ]);
+        for (const row of dashRows) {
+          if (!row) continue;
+          tankId = row.tank_id ?? row.preferred_tank_id ?? tankId;
+          const v = safeNum(row.tank_volume_liters) ?? safeNum(row.tank_volume);
+          if (v && v > 0) { vol = v; break; }
         }
+      } catch (_e) {
+        // ignore
       }
-      if (!cancelled && vol) setTankLiters(vol);
+      if (!cancelled && vol !== undefined && vol > 0) setTankLiters(vol);
 
       // 2) Targets
       const trows = await Promise.all([
@@ -170,6 +178,15 @@ export default function CalculatorPage() {
         if (k === "alk" || k === "ca" || k === "mg") paramIdMap[k as 'alk'|'ca'|'mg'] = r.id;
       }
 
+      // Pre-fetch products for these parameters (global + user)
+      const productRows = await trySelect(
+        "products",
+        "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
+        (q:any) => {
+          const ids = Object.values(paramIdMap).filter((n: any): n is number => typeof n === 'number');
+          return ids.length ? q.in('parameter_id', ids) : q;
+        }
+      );
       // 4) Products potency (robust)
       async function loadProductFor(param: "alk"|"ca"|"mg"): Promise<ProductPotencyRaw | null> {
         const syns = new Set<string>(PARAM_KEYS[param].map(s=>s.toLowerCase()));
@@ -203,7 +220,7 @@ export default function CalculatorPage() {
           "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
           (q:any)=> q.eq("user_id", uid).eq("parameter_key", param)
         );
-        const p1 = extract(pref?.products);
+        const p1 = extract(pref?.products) || extract(pref);
         if (p1) return p1;
 
         // B) products table (preferred first, then best text match)
@@ -283,8 +300,9 @@ export default function CalculatorPage() {
           return false;
         };
 
-        for (const table of tables) {
-          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
+        const rowsList = await Promise.all(tables.map(t => fetchRowsFlexible(t, "*", uid, tankId, 200)));
+        for (let i = 0; i < tables.length; i++) {
+          const rows = rowsList[i];
           if (!rows?.length) continue;
           const pts = rows
             .filter(keyMatch)
@@ -370,7 +388,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
-  // Change over last N readings (diff between Nth and 1st)
+  // Change over last N readings (latest minus Nth)
   const changeOverLookback = useMemo(() => {
     const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
     (["alk","ca","mg"] as const).forEach(k => {
@@ -378,7 +396,7 @@ export default function CalculatorPage() {
       if (s.length >= lookback) {
         const latest = s[0].v;
         const nth = s[lookback-1].v;
-        const diff = nth - latest;
+        const diff = latest - nth;
         out[k] = Math.round(diff * 10) / 10;
       } else {
         out[k] = undefined;
@@ -504,17 +522,11 @@ export default function CalculatorPage() {
               <option value={7}>7 readings</option>
               <option value={10}>10 readings</option>
             </select>
-            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+            <span className="text-sm text-muted-foreground">Δ = reading #1 − reading #{String(lookback)}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(["alk","ca","mg"] as const).map((k)=>{
-              const s = seriesByParam[k] ?? [];
-              let delta: number | undefined = undefined;
-              if (s.length >= lookback) {
-                const latest = s[0].v;
-                const nth = s[lookback-1].v;
-                delta = Math.round((nth - latest) * 10) / 10;
-              }
+              const delta = changeOverLookback[k];
               return (
                 <div key={k} className="border rounded-xl p-3">
                   <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
