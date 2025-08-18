@@ -62,7 +62,6 @@ function potencyFor(pr: ProductPotencyRaw | undefined): number | undefined {
   }
   return undefined;
 }
-
 type SeriesPoint = { v: number; t: number };
 
 async function trySelect(table: string, select: string, build: (q:any)=>any, limit=100) {
@@ -145,7 +144,7 @@ export default function CalculatorPage() {
       } catch (_e) {
         // ignore
       }
-      if (!cancelled && vol) setTankLiters(vol);
+      if (!cancelled && vol !== undefined && vol > 0) setTankLiters(vol);
 
       // 2) Targets
       const trows = await Promise.all([
@@ -207,7 +206,7 @@ export default function CalculatorPage() {
           "user_id, parameter_key, products:product_id (*)",
           (q:any)=> q.eq("user_id", uid).eq("parameter_key", param)
         );
-        const p1 = extract(pref?.products);
+        const p1 = extract(pref?.products) || extract(pref);
         if (p1) return p1;
 
         // B) products table (preferred first, then best text match)
@@ -287,8 +286,9 @@ export default function CalculatorPage() {
           return false;
         };
 
-        for (const table of tables) {
-          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
+        const rowsList = await Promise.all(tables.map(t => fetchRowsFlexible(t, "*", uid, tankId, 200)));
+        for (let i = 0; i < tables.length; i++) {
+          const rows = rowsList[i];
           if (!rows?.length) continue;
           const pts = rows
             .filter(keyMatch)
@@ -374,7 +374,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
-  // Change over last N readings (diff between Nth and 1st)
+  // Change over last N readings (latest minus Nth)
   const changeOverLookback = useMemo(() => {
     const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
     (["alk","ca","mg"] as const).forEach(k => {
@@ -382,7 +382,7 @@ export default function CalculatorPage() {
       if (s.length >= lookback) {
         const latest = s[0].v;
         const nth = s[lookback-1].v;
-        const diff = nth - latest;
+        const diff = latest - nth;
         out[k] = Math.round(diff * 10) / 10;
       } else {
         out[k] = undefined;
@@ -506,17 +506,11 @@ export default function CalculatorPage() {
               <option value={7}>7 readings</option>
               <option value={10}>10 readings</option>
             </select>
-            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+            <span className="text-sm text-muted-foreground">Δ = reading #1 − reading #{String(lookback)}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(["alk","ca","mg"] as const).map((k)=>{
-              const s = seriesByParam[k] ?? [];
-              let delta: number | undefined = undefined;
-              if (s.length >= lookback) {
-                const latest = s[0].v;
-                const nth = s[lookback-1].v;
-                delta = Math.round((nth - latest) * 10) / 10;
-              }
+              const delta = changeOverLookback[k];
               return (
                 <div key={k} className="border rounded-xl p-3">
                   <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
