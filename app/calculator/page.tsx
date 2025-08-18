@@ -107,7 +107,6 @@ export default function CalculatorPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const uid: string = user.id;
-
       // 1) Tank (fetch from tanks table like dashboard; fall back to older sources)
       let tankId: any = null;
       let vol: number | undefined = undefined;
@@ -129,8 +128,10 @@ export default function CalculatorPage() {
           const v = safeNum(row.tank_volume_liters) ?? safeNum(row.tank_volume);
           if (v && v > 0) { vol = v; break; }
         }
+      } catch (_e) {
+        // ignore
       }
-      if (!cancelled && vol) setTankLiters(vol);
+      if (!cancelled && vol !== undefined && vol > 0) setTankLiters(vol);
 
       // 2) Targets
       const trows = await Promise.all([
@@ -201,7 +202,7 @@ export default function CalculatorPage() {
           "user_id, parameter_key, products:product_id (brand, name, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters)",
           (q:any)=> q.eq("user_id", uid).eq("parameter_key", param)
         );
-        const p1 = extract(pref?.products);
+        const p1 = extract(pref?.products) || extract(pref);
         if (p1) return p1;
 
         // B) products table (preferred first, then best text match)
@@ -217,7 +218,7 @@ export default function CalculatorPage() {
           const mine = r.user_id === uid ? 1 : 0;
           const score = (r.is_preferred ? 3 : 0) + mine*2 + (matchId ? 2 : 0) + (hit ? 1 : 0);
           return { row:r, score };
-        }).sort((a,b)=> b.score - a.score);
+        }).filter(s=> s.score > 0).sort((a,b)=> b.score - a.score);
         for (const s of scored) {
           const p = extract(s.row);
           if (p) return p;
@@ -282,8 +283,9 @@ export default function CalculatorPage() {
           return false;
         };
 
-        for (const table of tables) {
-          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
+        const rowsList = await Promise.all(tables.map(t => fetchRowsFlexible(t, "*", uid, tankId, 200)));
+        for (let i = 0; i < tables.length; i++) {
+          const rows = rowsList[i];
           if (!rows?.length) continue;
           const pts = rows
             .filter(keyMatch)
@@ -369,7 +371,7 @@ export default function CalculatorPage() {
     setDeltaDose(delta);
   }, [tankLiters, currentDose, current, target, product, slopesPerDay, tolerance]);
 
-  // Change over last N readings (diff between Nth and 1st)
+  // Change over last N readings (latest minus Nth)
   const changeOverLookback = useMemo(() => {
     const out: {[K in 'alk'|'ca'|'mg']?: number} = {};
     (["alk","ca","mg"] as const).forEach(k => {
@@ -377,7 +379,7 @@ export default function CalculatorPage() {
       if (s.length >= lookback) {
         const latest = s[0].v;
         const nth = s[lookback-1].v;
-        const diff = nth - latest;
+        const diff = latest - nth;
         out[k] = Math.round(diff * 10) / 10;
       } else {
         out[k] = undefined;
@@ -508,17 +510,11 @@ export default function CalculatorPage() {
               <option value={7}>7 readings</option>
               <option value={10}>10 readings</option>
             </select>
-            <span className="text-sm text-muted-foreground">Δ = reading #{String(lookback)} − reading #1</span>
+            <span className="text-sm text-muted-foreground">Δ = reading #1 − reading #{String(lookback)}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(["alk","ca","mg"] as const).map((k)=>{
-              const s = seriesByParam[k] ?? [];
-              let delta: number | undefined = undefined;
-              if (s.length >= lookback) {
-                const latest = s[0].v;
-                const nth = s[lookback-1].v;
-                delta = Math.round((nth - latest) * 10) / 10;
-              }
+              const delta = changeOverLookback[k];
               return (
                 <div key={k} className="border rounded-xl p-3">
                   <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
