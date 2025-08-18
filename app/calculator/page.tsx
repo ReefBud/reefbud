@@ -108,29 +108,24 @@ export default function CalculatorPage() {
       if (!user) return;
       const uid: string = user.id;
 
-      // 1) Tank (dashboard/profile/tanks; no server-side order to avoid missing columns)
-      let tankId: any = null;
+      // 1) Tank volume from dashboard's tanks table
+      let tankId: string | null = null;
       let vol: number | undefined = undefined;
-      const dashRows = await Promise.all([
-        trySingle("user_dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
-        trySingle("dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
-        trySingle("profiles", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
-        trySingle("user_settings", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
-      ]);
-      for (const row of dashRows) {
-        if (!row) continue;
-        tankId = row.tank_id ?? row.preferred_tank_id ?? tankId;
-        const v = safeNum(row.tank_volume_liters) ?? safeNum(row.tank_volume);
-        if (v && v > 0) { vol = v; break; }
-      }
-      if (!vol) {
-        const prefTank = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", uid));
-        if (prefTank) {
-          tankId = prefTank.id ?? tankId;
-          vol = safeNum(prefTank.volume_liters) ?? safeNum(prefTank.volume_value) ?? vol;
+      try {
+        const { data: tanks } = await supabase
+          .from("tanks")
+          .select("id, volume_liters, volume_value")
+          .eq("user_id", uid)
+          .limit(1);
+        const t = tanks?.[0] as any;
+        if (t) {
+          tankId = t.id ?? null;
+          vol = safeNum(t.volume_liters) ?? safeNum(t.volume_value);
         }
+      } catch (_e) {
+        // ignore
       }
-      if (!cancelled && vol !== undefined) setTankLiters(vol);
+      if (!cancelled && vol !== undefined && vol > 0) setTankLiters(vol);
 
       // 2) Targets
       const trows = await Promise.all([
@@ -200,11 +195,12 @@ export default function CalculatorPage() {
           "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
           uid, tankId, 200
         );
-        const filtered = (products || []).filter((r:any)=> paramId ? safeNum(r.parameter_id) === paramId : true);
-        const scored = filtered.map((r:any) => {
-          const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
-          const hit = keys.some((k:string)=> syns.has(k));
-          const matchId = paramId !== undefined && r.parameter_id === paramId;
+        const scored = (products || []).map((r:any) => {
+          const keys = [r.parameter_key, r.parameter, r.key, r.name]
+            .filter(Boolean)
+            .map((x:any)=> String(x).toLowerCase());
+          const hit = keys.some((k:string)=> syns.has(k) || [...syns].some(s=>k.includes(s)));
+          const matchId = paramId !== undefined && safeNum(r.parameter_id) === paramId;
           const score = (r.is_preferred ? 3 : 0) + (matchId ? 2 : 0) + (hit ? 1 : 0);
           return { row:r, score };
         }).filter(s=> s.score > 0).sort((a,b)=> b.score - a.score);
@@ -217,9 +213,11 @@ export default function CalculatorPage() {
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
-            if (paramId && r.parameter_id !== paramId) continue;
-            const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
-            if (keys.some((k:string)=> syns.has(k))) {
+            if (paramId && safeNum(r.parameter_id) !== paramId) continue;
+            const keys = [r.parameter_key, r.parameter, r.key, r.name]
+              .filter(Boolean)
+              .map((x:any)=> String(x).toLowerCase());
+            if (keys.some((k:string)=> syns.has(k) || [...syns].some(s=>k.includes(s)))) {
               const p = extract(r);
               if (p) return p;
             }
@@ -232,7 +230,7 @@ export default function CalculatorPage() {
       ] as const).map(async (k) => [k, await loadProductFor(k)] as const));
       const nextProducts = Object.fromEntries(nextProductsEntries.filter(([,v])=>v !== null));
       if (!cancelled) setProduct((prev)=> ({...prev, ...nextProducts as any}));
-      // 5) Series (no server-side ordering; sort client-side; robust key/time extraction)
+ (no server-side ordering; sort client-side; robust key/time extraction)
       async function loadSeriesFor(pkey: "alk"|"ca"|"mg"): Promise<SeriesPoint[]> {
         const syns = new Set<string>(PARAM_KEYS[pkey].map(s=>s.toLowerCase()));
         const tables = ["results","readings","tests","measurements","water_tests","test_results","reef_results"];
