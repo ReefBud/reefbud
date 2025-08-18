@@ -120,8 +120,8 @@ export default function CalculatorPage() {
       for (const row of dashRows) {
         if (!row) continue;
         tankId = row.tank_id ?? row.preferred_tank_id ?? tankId;
-        const v = row.tank_volume_liters ?? row.tank_volume;
-        if (typeof v === "number" && v > 0) { vol = v; break; }
+        const v = safeNum(row.tank_volume_liters ?? row.tank_volume);
+        if (v && v > 0) { vol = v; break; }
       }
       if (!vol) {
         const prefTank = await trySingle("tanks", "id, volume_liters, volume_value, preferred, user_id", (q:any)=> q.eq("user_id", uid));
@@ -130,7 +130,7 @@ export default function CalculatorPage() {
           vol = safeNum(prefTank.volume_liters) ?? safeNum(prefTank.volume_value) ?? vol;
         }
       }
-      if (!cancelled && vol) setTankLiters(vol);
+      if (!cancelled && vol !== undefined) setTankLiters(vol);
 
       // 2) Targets
       const trows = await Promise.all([
@@ -200,6 +200,7 @@ export default function CalculatorPage() {
           "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
           uid, tankId, 200
         );
+        const filtered = (products || []).filter((r:any)=> paramId ? Number(r.parameter_id) === paramId : true);
         const filtered = (products || []).filter((r:any)=> paramId ? r.parameter_id === paramId : true);
         const scored = filtered.map((r:any) => {
           const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
@@ -216,6 +217,7 @@ export default function CalculatorPage() {
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
+            if (paramId && Number(r.parameter_id) !== paramId) continue;
             if (paramId && r.parameter_id !== paramId) continue;
             const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
             if (keys.some((k:string)=> syns.has(k))) {
@@ -226,6 +228,11 @@ export default function CalculatorPage() {
         }
         return null;
       }
+      const productEntries = await Promise.all(
+        (["alk","ca","mg"] as const).map(async k => [k, await loadProductFor(k)] as const)
+      );
+      const nextProducts = Object.fromEntries(productEntries.filter(([,p]) => p)) as any;
+      if (!cancelled) setProduct(prev => ({ ...prev, ...nextProducts }));
       const nextProducts: any = {};
       for (const k of ["alk","ca","mg"] as const) {
         const p = await loadProductFor(k);
@@ -262,6 +269,7 @@ export default function CalculatorPage() {
           return 0;
         };
         const keyMatch = (r:any): boolean => {
+          if (paramIdMap[pkey] !== undefined && Number(r?.parameter_id) === paramIdMap[pkey]) return true;
           if (paramIdMap[pkey] !== undefined && r?.parameter_id === paramIdMap[pkey]) return true;
           const txt = keyCols.map(k => r?.[k]).find(x => typeof x === "string");
           const s = txt ? String(txt).toLowerCase() : "";
@@ -272,8 +280,10 @@ export default function CalculatorPage() {
           return false;
         };
 
-        for (const table of tables) {
-          const rows = await fetchRowsFlexible(table, "*", uid, tankId, 200);
+        const tableRows = await Promise.all(
+          tables.map(t => fetchRowsFlexible(t, "*", uid, tankId, 200))
+        );
+        for (const rows of tableRows) {
           if (!rows?.length) continue;
           const pts = rows
             .filter(keyMatch)
@@ -290,10 +300,10 @@ export default function CalculatorPage() {
         }
         return [];
       }
-      const map: any = {};
-      for (const k of ["alk","ca","mg"] as const) {
-        map[k] = await loadSeriesFor(k);
-      }
+      const seriesEntries = await Promise.all(
+        (["alk","ca","mg"] as const).map(async k => [k, await loadSeriesFor(k)] as const)
+      );
+      const map = Object.fromEntries(seriesEntries) as any;
       if (!cancelled) {
         setSeriesByParam(map);
         if (!hydratedRef.current) {
@@ -403,8 +413,9 @@ export default function CalculatorPage() {
             <div key={k}>
               <label className="block text-sm text-muted-foreground mb-1">{k.toUpperCase()}</label>
               <input type="number" inputMode="decimal" className="w-full border rounded-lg p-2 bg-background"
-                value={currentDose[k as keyof Doses] ?? ""} onChange={(e)=>setCurrentDose({ ...currentDose, [k]: safeNum(e.target.value) })}
-                placeholder={k==="alk"?"e.g. 34":"e.g. 12"} />
+                value={currentDose[k as keyof Doses] ?? ""}
+                onChange={(e)=>setCurrentDose({ ...currentDose, [k]: safeNum(e.target.value) })}
+              />
             </div>
           ))}
         </div>
