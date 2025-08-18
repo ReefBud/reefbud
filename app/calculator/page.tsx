@@ -107,20 +107,26 @@ export default function CalculatorPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const uid: string = user.id;
-
-      // 1) Tank volume from dashboard's tanks table
-      let tankId: string | null = null;
+      // 1) Tank (fetch from tanks table like dashboard; fall back to older sources)
+      let tankId: any = null;
       let vol: number | undefined = undefined;
-      try {
-        const { data: tanks } = await supabase
-          .from("tanks")
-          .select("id, volume_liters, volume_value")
-          .eq("user_id", uid)
-          .limit(1);
-        const t = tanks?.[0] as any;
-        if (t) {
-          tankId = t.id ?? null;
-          vol = safeNum(t.volume_liters) ?? safeNum(t.volume_value);
+      const tankRow = await trySingle("tanks", "id, volume_liters, volume_value", (q:any)=> q.eq("user_id", uid));
+      if (tankRow) {
+        tankId = tankRow.id ?? tankId;
+        vol = safeNum(tankRow.volume_liters) ?? safeNum(tankRow.volume_value) ?? vol;
+      }
+      if (!vol) {
+        const dashRows = await Promise.all([
+          trySingle("user_dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("dashboard", "user_id, tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("profiles", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+          trySingle("user_settings", "user_id, preferred_tank_id, tank_volume_liters, tank_volume", (q:any)=> q.eq("user_id", uid)),
+        ]);
+        for (const row of dashRows) {
+          if (!row) continue;
+          tankId = row.tank_id ?? row.preferred_tank_id ?? tankId;
+          const v = safeNum(row.tank_volume_liters) ?? safeNum(row.tank_volume);
+          if (v && v > 0) { vol = v; break; }
         }
       } catch (_e) {
         // ignore
@@ -152,6 +158,16 @@ export default function CalculatorPage() {
         const k = typeof r?.key === "string" ? String(r.key).toLowerCase() : "";
         if (k === "alk" || k === "ca" || k === "mg") paramIdMap[k as 'alk'|'ca'|'mg'] = r.id;
       }
+
+      // Pre-fetch products for these parameters (global + user)
+      const productRows = await trySelect(
+        "products",
+        "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
+        (q:any) => {
+          const ids = Object.values(paramIdMap).filter((n: any): n is number => typeof n === 'number');
+          return ids.length ? q.in('parameter_id', ids) : q;
+        }
+      );
 
       // 4) Products potency (robust)
       async function loadProductFor(param: "alk"|"ca"|"mg"): Promise<ProductPotencyRaw | null> {
@@ -190,18 +206,17 @@ export default function CalculatorPage() {
         if (p1) return p1;
 
         // B) products table (preferred first, then best text match)
-        const products = await fetchRowsFlexible(
-          "products",
-          "brand, name, parameter_id, parameter_key, parameter, key, potency_per_ml_per_l, per_ml_per_l, effect_per_ml_per_l, ml_per_l_increase, increase_per_ml_per_l, ml_per_l_effect, dose_ref_ml, dose_ml, reference_dose_ml, delta_ref_value, delta_increase, increase_value, volume_ref_liters, reference_volume_liters, ref_volume_liters, tank_volume_liters, is_preferred, created_at, user_id",
-          uid, tankId, 200
-        );
-        const scored = (products || []).map((r:any) => {
-          const keys = [r.parameter_key, r.parameter, r.key, r.name]
-            .filter(Boolean)
-            .map((x:any)=> String(x).toLowerCase());
-          const hit = keys.some((k:string)=> syns.has(k) || [...syns].some(s=>k.includes(s)));
-          const matchId = paramId !== undefined && safeNum(r.parameter_id) === paramId;
-          const score = (r.is_preferred ? 3 : 0) + (matchId ? 2 : 0) + (hit ? 1 : 0);
+        const candidates = (productRows || []).filter((r:any) => {
+          if (paramId && r.parameter_id === paramId) return true;
+          const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
+          return keys.some((k:string)=> syns.has(k));
+        });
+        const scored = candidates.map((r:any) => {
+          const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
+          const hit = keys.some((k:string)=> syns.has(k));
+          const matchId = paramId !== undefined && r.parameter_id === paramId;
+          const mine = r.user_id === uid ? 1 : 0;
+          const score = (r.is_preferred ? 3 : 0) + mine*2 + (matchId ? 2 : 0) + (hit ? 1 : 0);
           return { row:r, score };
         }).filter(s=> s.score > 0).sort((a,b)=> b.score - a.score);
         for (const s of scored) {
@@ -213,11 +228,9 @@ export default function CalculatorPage() {
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
-            if (paramId && safeNum(r.parameter_id) !== paramId) continue;
-            const keys = [r.parameter_key, r.parameter, r.key, r.name]
-              .filter(Boolean)
-              .map((x:any)=> String(x).toLowerCase());
-            if (keys.some((k:string)=> syns.has(k) || [...syns].some(s=>k.includes(s)))) {
+            if (paramId && r.parameter_id !== paramId) continue;
+            const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
+            if (keys.some((k:string)=> syns.has(k))) {
               const p = extract(r);
               if (p) return p;
             }
@@ -230,7 +243,8 @@ export default function CalculatorPage() {
       ] as const).map(async (k) => [k, await loadProductFor(k)] as const));
       const nextProducts = Object.fromEntries(nextProductsEntries.filter(([,v])=>v !== null));
       if (!cancelled) setProduct((prev)=> ({...prev, ...nextProducts as any}));
- (no server-side ordering; sort client-side; robust key/time extraction)
+
+      // 5) Series (no server-side ordering; sort client-side; robust key/time extraction)
       async function loadSeriesFor(pkey: "alk"|"ca"|"mg"): Promise<SeriesPoint[]> {
         const syns = new Set<string>(PARAM_KEYS[pkey].map(s=>s.toLowerCase()));
         const tables = ["results","readings","tests","measurements","water_tests","test_results","reef_results"];
@@ -418,13 +432,23 @@ export default function CalculatorPage() {
             return (
               <div key={k} className="border rounded-xl p-3">
                 <div className="text-sm text-muted-foreground">{k.toUpperCase()}</div>
-                {perL !== undefined && perL !== null ? (
-                  <div className="text-sm">Per ml per L: <strong>{round2(perL)}</strong></div>
-                ) : pr && pr.dose_ml && pr.delta_value != null && pr.volume_liters ? (
-                  <div className="text-sm">
-                    {pr.brand || pr.name ? (<div className="mb-1">{pr.brand ? `${pr.brand} ` : ""}{pr.name || ""}</div>) : null}
-                    <div><strong>{pr.dose_ml}</strong> ml raises <strong>{pr.delta_value}</strong> in a <strong>{pr.volume_liters}</strong> L tank.</div>
-                  </div>
+                {pr ? (
+                  <>
+                    {pr.brand || pr.name ? (
+                      <div className="mb-1">
+                        {pr.brand ? `${pr.brand} — ` : ""}{pr.name || ""}
+                      </div>
+                    ) : null}
+                    {perL ? (
+                      <div className="text-sm">Potency ≈ <strong>{round2(perL)}</strong> units/ml/L</div>
+                    ) : pr.dose_ml && pr.delta_value != null && pr.volume_liters ? (
+                      <div className="text-sm">
+                        <strong>{pr.dose_ml}</strong> ml raises <strong>{pr.delta_value}</strong> in a <strong>{pr.volume_liters}</strong> L tank.
+                      </div>
+                    ) : (
+                      <div className="text-sm">No product found. Add it on the Products tab or set a preferred product.</div>
+                    )}
+                  </>
                 ) : (
                   <div className="text-sm">No product found. Add it on the Products tab or set a preferred product.</div>
                 )}
