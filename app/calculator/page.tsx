@@ -204,9 +204,10 @@ export default function CalculatorPage() {
         const scored = filtered.map((r:any) => {
           const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
           const hit = keys.some((k:string)=> syns.has(k));
-          const score = (r.is_preferred ? 2 : 0) + (hit ? 1 : 0);
+          const matchId = paramId !== undefined && r.parameter_id === paramId;
+          const score = (r.is_preferred ? 3 : 0) + (matchId ? 2 : 0) + (hit ? 1 : 0);
           return { row:r, score };
-        }).sort((a,b)=> b.score - a.score);
+        }).filter(s=> s.score > 0).sort((a,b)=> b.score - a.score);
         for (const s of scored) {
           const p = extract(s.row);
           if (p) return p;
@@ -216,7 +217,7 @@ export default function CalculatorPage() {
         for (const t of ["user_products","products_user","my_products"]) {
           const rows = await fetchRowsFlexible(t, "*", uid, tankId, 200);
           for (const r of rows) {
-            if (paramId && safeNum(r.parameter_id) !== paramId) continue;
+            if (paramId && r.parameter_id !== paramId) continue;
             const keys = [r.parameter_key, r.parameter, r.key, r.name].filter(Boolean).map((x:any)=> String(x).toLowerCase());
             if (keys.some((k:string)=> syns.has(k))) {
               const p = extract(r);
@@ -226,20 +227,11 @@ export default function CalculatorPage() {
         }
         return null;
       }
-      const productEntries = await Promise.all(
-        (["alk","ca","mg"] as const).map(async k => [k, await loadProductFor(k)] as const)
-      );
-      const nextProducts = Object.fromEntries(productEntries.filter(([,p]) => p)) as any;
-      if (!cancelled) setProduct(prev => ({ ...prev, ...nextProducts }));
-      const nextProducts: any = {};
-      await Promise.all(([
+      const nextProductsEntries = await Promise.all(([
         "alk","ca","mg"
-      ] as const).map(async (k) => {
-        const p = await loadProductFor(k);
-        if (p) nextProducts[k] = p;
-      }));
-      if (!cancelled) setProduct((prev)=> ({...prev, ...nextProducts}));
-      
+      ] as const).map(async (k) => [k, await loadProductFor(k)] as const));
+      const nextProducts = Object.fromEntries(nextProductsEntries.filter(([,v])=>v !== null));
+      if (!cancelled) setProduct((prev)=> ({...prev, ...nextProducts as any}));
       // 5) Series (no server-side ordering; sort client-side; robust key/time extraction)
       async function loadSeriesFor(pkey: "alk"|"ca"|"mg"): Promise<SeriesPoint[]> {
         const syns = new Set<string>(PARAM_KEYS[pkey].map(s=>s.toLowerCase()));
@@ -269,7 +261,7 @@ export default function CalculatorPage() {
           return 0;
         };
         const keyMatch = (r:any): boolean => {
-          if (paramIdMap[pkey] !== undefined && safeNum(r?.parameter_id) === paramIdMap[pkey]) return true;
+          if (paramIdMap[pkey] !== undefined && r?.parameter_id === paramIdMap[pkey]) return true;
           const txt = keyCols.map(k => r?.[k]).find(x => typeof x === "string");
           const s = txt ? String(txt).toLowerCase() : "";
           if (syns.has(s)) return true;
@@ -298,12 +290,10 @@ export default function CalculatorPage() {
         }
         return [];
       }
-      const map: any = {};
-      await Promise.all(([
+      const seriesEntries = await Promise.all(([
         "alk","ca","mg"
-      ] as const).map(async (k) => {
-        map[k] = await loadSeriesFor(k);
-      }));
+      ] as const).map(async (k) => [k, await loadSeriesFor(k)] as const));
+      const map: any = Object.fromEntries(seriesEntries);
       if (!cancelled) {
         setSeriesByParam(map);
         if (!hydratedRef.current) {
