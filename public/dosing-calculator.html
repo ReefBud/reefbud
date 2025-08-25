@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dosing Calculator</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
+    input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #f7f7f7; }
+    .muted { opacity: .8; font-size: 0.9rem; }
+    .result { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Dosing Calculator</h1>
+  <p class="muted">
+    Enter potencies as increase per 1 ml per 1 liter of tank. The calculator scales this to your tank volume.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Tank</h3>
+      <label>Tank size (L)<br><input id="tankL" type="number" value="35"></label>
+      <label>Round dose to (ml)<br><input id="roundMl" type="number" value="0.1" step="0.1"></label>
+    </div>
+
+    <div class="card">
+      <h3>Tolerance</h3>
+      <label>Alk tol (dKH)<br><input id="tolAlk" type="number" value="0.05" step="0.01"></label>
+      <label>Ca tol (ppm)<br><input id="tolCa" type="number" value="2"></label>
+      <label>Mg tol (ppm)<br><input id="tolMg" type="number" value="5"></label>
+    </div>
+
+    <div class="card">
+      <h3>Alkalinity</h3>
+      <label>Current dose (ml/day)<br><input id="doseAlk" type="number" value="30"></label>
+      <label>Potency dKH/ml/L<br><input id="potAlk" type="number" value="0.073" step="0.0001"></label>
+      <label>Current (dKH)<br><input id="curAlk" type="number" value="6.7" step="0.01"></label>
+      <label>Target (dKH)<br><input id="tgtAlk" type="number" value="8.0" step="0.01"></label>
+    </div>
+
+    <div class="card">
+      <h3>Calcium</h3>
+      <label>Current dose (ml/day)<br><input id="doseCa" type="number" value="10"></label>
+      <label>Potency ppm/ml/L<br><input id="potCa" type="number" value="0.000" step="0.0001"></label>
+      <label>Current (ppm)<br><input id="curCa" type="number" value="420"></label>
+      <label>Target (ppm)<br><input id="tgtCa" type="number" value="440"></label>
+    </div>
+
+    <div class="card">
+      <h3>Magnesium</h3>
+      <label>Current dose (ml/day)<br><input id="doseMg" type="number" value="10"></label>
+      <label>Potency ppm/ml/L<br><input id="potMg" type="number" value="0.000" step="0.0001"></label>
+      <label>Current (ppm)<br><input id="curMg" type="number" value="1280"></label>
+      <label>Target (ppm)<br><input id="tgtMg" type="number" value="1350"></label>
+    </div>
+  </div>
+
+  <p><button id="calcBtn">Calculate</button></p>
+
+  <div class="card">
+    <h3>New Daily Doses</h3>
+    <div>Alk: <span class="result" id="outAlk">-</span> ml/day</div>
+    <div>Ca: <span class="result" id="outCa">-</span> ml/day</div>
+    <div>Mg: <span class="result" id="outMg">-</span> ml/day</div>
+    <p class="muted" id="debug"></p>
+  </div>
+
+<script>
+function roundTo(value, step) {
+  var factor = 1 / step;
+  return Math.round(value * factor) / factor;
+}
+function dose(currentDose, incPerMl, currentValue, targetValue, tol, roundMl) {
+  var delta = targetValue - currentValue;
+  if (Math.abs(delta) <= tol) {
+    return [roundTo(currentDose, roundMl), delta, 0];
+  }
+  var adjustMl = incPerMl !== 0 ? (delta / incPerMl) : 0;
+  var newDose = Math.max(0, roundTo(currentDose + adjustMl, roundMl));
+  return [newDose, delta, adjustMl];
+}
+document.getElementById('calcBtn').addEventListener('click', function() {
+  var L = parseFloat(document.getElementById('tankL').value || '0');
+  var r = parseFloat(document.getElementById('roundMl').value || '0.1');
+  var tolAlk = parseFloat(document.getElementById('tolAlk').value || '0');
+  var tolCa  = parseFloat(document.getElementById('tolCa').value  || '0');
+  var tolMg  = parseFloat(document.getElementById('tolMg').value  || '0');
+
+  var incPerMlAlk = parseFloat(document.getElementById('potAlk').value || '0') * L;
+  var incPerMlCa  = parseFloat(document.getElementById('potCa').value  || '0') * L;
+  var incPerMlMg  = parseFloat(document.getElementById('potMg').value  || '0') * L;
+
+  var outA = dose(
+    parseFloat(document.getElementById('doseAlk').value || '0'),
+    incPerMlAlk,
+    parseFloat(document.getElementById('curAlk').value || '0'),
+    parseFloat(document.getElementById('tgtAlk').value || '0'),
+    tolAlk, r
+  );
+  var outC = dose(
+    parseFloat(document.getElementById('doseCa').value || '0'),
+    incPerMlCa,
+    parseFloat(document.getElementById('curCa').value || '0'),
+    parseFloat(document.getElementById('tgtCa').value || '0'),
+    tolCa, r
+  );
+  var outM = dose(
+    parseFloat(document.getElementById('doseMg').value || '0'),
+    incPerMlMg,
+    parseFloat(document.getElementById('curMg').value || '0'),
+    parseFloat(document.getElementById('tgtMg').value || '0'),
+    tolMg, r
+  );
+
+  document.getElementById('outAlk').textContent = outA[0].toFixed(2);
+  document.getElementById('outCa').textContent  = outC[0].toFixed(2);
+  document.getElementById('outMg').textContent  = outM[0].toFixed(2);
+
+  document.getElementById('debug').textContent =
+    'incPerMl: Alk ' + incPerMlAlk.toFixed(4) + ', Ca ' + incPerMlCa.toFixed(4) + ', Mg ' + incPerMlMg.toFixed(4) +
+    ' | delta: Alk ' + outA[1].toFixed(3) + ', Ca ' + outC[1].toFixed(1) + ', Mg ' + outM[1].toFixed(1) +
+    ' | adjustMl: Alk ' + outA[2].toFixed(3) + ', Ca ' + outC[2].toFixed(3) + ', Mg ' + outM[2].toFixed(3);
+});
+</script>
+</body>
+</html>

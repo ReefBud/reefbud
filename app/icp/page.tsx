@@ -1,0 +1,1 @@
+export default function I(){return <main className='p-4 border rounded'>ICP Uploads</main>}

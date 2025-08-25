@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+
+# next build
+.next/
+out/
+
+# env & local
+.env.local
+.env.*
+!.env.example
+
+# misc
+.DS_Store
+.vercel/
+*.log
+*.zip
